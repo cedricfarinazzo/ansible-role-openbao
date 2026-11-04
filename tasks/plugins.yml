@@ -1,5 +1,18 @@
 ---
 # Before any install: a wrong checksum stops the run with nothing installed
+- name: Is OpenBao already installed (check mode tolerates only what a fresh host lacks)
+  ansible.builtin.command: dpkg-query -W -f '${db:Status-Status}' openbao
+  register: openbao_dpkg
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Remember it
+  ansible.builtin.set_fact:
+    openbao_present: "{{ openbao_dpkg.stdout == 'installed' }}"
+    # Check mode on a host without OpenBao: skip what needs the package, its user or its directories
+    openbao_fresh_check: "{{ ansible_check_mode and openbao_dpkg.stdout != 'installed' }}"
+
 - name: Download cache (plugins, repository key)
   ansible.builtin.file:
     path: "{{ openbao_plugin_cache }}"
@@ -11,7 +24,7 @@
 - name: Download each plugin archive, checksum checked
   ansible.builtin.get_url:
     url: "{{ item.url }}"
-    dest: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}.tar.gz"
+    dest: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}-{{ item.checksum[:16] }}.tar.gz"
     checksum: "sha256:{{ item.checksum }}"
     owner: root
     group: root
@@ -19,11 +32,11 @@
   loop: "{{ openbao_plugins }}"
   loop_control:
     label: "{{ item.type }}/{{ item.name }} {{ item.version }}"
-  ignore_errors: "{{ ansible_check_mode }}"
+  when: not openbao_fresh_check
 
 - name: One directory per plugin version
   ansible.builtin.file:
-    path: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}"
+    path: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}-{{ item.checksum[:16] }}"
     state: directory
     owner: root
     group: root
@@ -34,11 +47,11 @@
 
 - name: Unpack each plugin archive
   ansible.builtin.unarchive:
-    src: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}.tar.gz"
-    dest: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}"
+    src: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}-{{ item.checksum[:16] }}.tar.gz"
+    dest: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}-{{ item.checksum[:16] }}"
     remote_src: true
     include: ["{{ item.binary }}"]
-    creates: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}/{{ item.binary }}"
+    creates: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}-{{ item.checksum[:16] }}/{{ item.binary }}"
   loop: "{{ openbao_plugins }}"
   loop_control:
     label: "{{ item.type }}/{{ item.name }} {{ item.version }}"
@@ -46,7 +59,7 @@
 
 - name: Read each unpacked binary's checksum
   ansible.builtin.stat:
-    path: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}/{{ item.binary }}"
+    path: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}-{{ item.checksum[:16] }}/{{ item.binary }}"
     checksum_algorithm: sha256
   loop: "{{ openbao_plugins }}"
   loop_control:

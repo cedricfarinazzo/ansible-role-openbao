@@ -28,6 +28,12 @@
       - openbao_tls_subject_alt_names is sequence and openbao_tls_subject_alt_names is not string
       - openbao_tls_subject_alt_names | reject('match', '^(IP|DNS):[A-Za-z0-9.:*-]+$') | list | length == 0
       - openbao_tls_valid_days is integer and openbao_tls_valid_days > 0
+      - openbao_tls_common_name is string and openbao_tls_common_name | length > 0
+      - >-
+        [openbao_tls_dir, openbao_tls_cert_file, openbao_tls_key_file, openbao_tls_ca_file, openbao_plugin_directory]
+        | reject('match', '^/[^ ]*$') | list | length == 0
+      - openbao_addr is string and openbao_addr is match('^https://[A-Za-z0-9.:\[\]-]+:[0-9]+$')
+      - openbao_token_script is boolean
       - openbao_cluster_listen_address is match('^[A-Za-z0-9.\[\]:-]*:[0-9]+$')
       - openbao_service_start is boolean
       - openbao_service_restart in ['no', 'on-success', 'on-failure', 'on-abnormal', 'on-watchdog', 'on-abort', 'always']
@@ -36,7 +42,22 @@
     fail_msg: >-
       openbao_api_addr is required (https://host:port), openbao_listener_address host:port, openbao_storage one
       backend, openbao_seal at most one seal, SANs IP:... or DNS:..., openbao_tls_valid_days a positive integer,
-      openbao_service_start a boolean, openbao_service_restart a systemd Restart= value, the start limits integers
+      openbao_service_start a boolean, openbao_service_restart a systemd Restart= value, the start limits integers,
+      the TLS and plugin paths absolute, openbao_tls_common_name set, openbao_addr https://host:port,
+      openbao_token_script a boolean
+    quiet: true
+
+- name: Assert the OAEP check can be built from the seal
+  ansible.builtin.assert:
+    that:
+      - openbao_pkcs11_oaep_check is boolean
+      - not openbao_pkcs11_oaep_check or (openbao_seal.pkcs11 is defined and openbao_seal.pkcs11.lib is defined)
+      - not openbao_pkcs11_oaep_check or openbao_seal.pkcs11.key_id | default('') is match('^[0-9a-fA-F]+$')
+      - not openbao_pkcs11_oaep_check or (openbao_seal.pkcs11.slot is defined or openbao_seal.pkcs11.token_label is defined)
+      - not openbao_pkcs11_oaep_check or openbao_seal.pkcs11.rsa_oaep_hash | default('sha256') in ['sha1', 'sha224', 'sha256', 'sha384', 'sha512']
+    fail_msg: >-
+      openbao_pkcs11_oaep_check needs openbao_seal.pkcs11 with lib, key_id (hex), slot or token_label,
+      and rsa_oaep_hash sha1/sha224/sha256/sha384/sha512 (default sha256)
     quiet: true
 
 - name: Assert the plugins
@@ -80,5 +101,5 @@
   vars:
     openbao_environment_missing: >-
       {{ openbao_environment_required
-         | reject('in', openbao_environment | dict2items | rejectattr('value', 'equalto', '') | map(attribute='key'))
+         | reject('in', openbao_environment | dict2items | rejectattr('value', 'equalto', '') | map(attribute='key') | list)
          | list }}

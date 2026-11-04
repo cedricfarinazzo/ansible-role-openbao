@@ -61,13 +61,17 @@ provisioner:
           BAO_HSM_PIN: "{{ molecule_hsm_pin }}"
           # Quotes, a dollar and a backslash reach the server unchanged (verify)
           MOLECULE_QUOTED: 'a "b" $$c \d'
-        openbao_environment_required: [BAO_HSM_PIN]
+        # Two names, PIN last: a one-shot generator in the check would report it missing
+        openbao_environment_required: [MOLECULE_QUOTED, BAO_HSM_PIN]
         openbao_token_script: true
+        openbao_pkcs11_oaep_check: true
         # As for an HSM with a PIN retry counter: no automatic restart
         openbao_service_restart: "no"
         openbao_service_start_limit_interval_sec: 120
         openbao_secrets_engines:
           - {path: transit, type: transit, description: Auto-unseal of other OpenBao servers}
+          # A trailing slash names the same mount: the second post-init run must not create it again
+          - {path: kv/, type: kv}
         openbao_transit_keys:
           - {mount: transit, name: autounseal}
         openbao_policies:

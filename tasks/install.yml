@@ -17,43 +17,40 @@
 - name: Download the repository key
   ansible.builtin.get_url:
     url: "{{ openbao_apt_key_url }}"
-    dest: "{{ openbao_plugin_cache }}/openbao-apt-key.asc"
+    dest: "{{ openbao_plugin_cache }}/openbao-apt-key-{{ openbao_apt_key_fingerprint }}.asc"
     owner: root
     group: root
     mode: "0644"
   register: openbao_apt_key_download
-  ignore_errors: "{{ ansible_check_mode }}"
+  when: not openbao_fresh_check
 
 - name: Read the key's fingerprint
   ansible.builtin.command:
-    argv: [gpg, --show-keys, --with-colons, "{{ openbao_plugin_cache }}/openbao-apt-key.asc"]
+    argv: [gpg, --show-keys, --with-colons, "{{ openbao_plugin_cache }}/openbao-apt-key-{{ openbao_apt_key_fingerprint }}.asc"]
   register: openbao_apt_key_show
   changed_when: false
   check_mode: false
-  ignore_errors: "{{ ansible_check_mode }}"
+  when: not openbao_fresh_check
 
 - name: Assert the key is the expected one
   ansible.builtin.assert:
-    # One primary key only, and its fingerprint (the line after "pub") is the pinned one
+    # One primary key only; gpg prints its fingerprint on the first fpr line, right after pub
     that:
       - openbao_apt_key_show.stdout_lines | select('match', '^pub:') | list | length == 1
-      - >-
-        openbao_apt_key_show.stdout_lines[openbao_apt_key_show.stdout_lines.index(
-        openbao_apt_key_show.stdout_lines | select('match', '^pub:') | first) + 1]
-        == 'fpr:::::::::' ~ openbao_apt_key_fingerprint ~ ':'
+      - (openbao_apt_key_show.stdout_lines | select('match', '^fpr:') | first) == 'fpr:::::::::' ~ openbao_apt_key_fingerprint ~ ':'
     fail_msg: "The key at {{ openbao_apt_key_url }} is not {{ openbao_apt_key_fingerprint }} alone: nothing installed"
     quiet: true
   when: not ansible_check_mode
 
 - name: Install the checked key for apt
   ansible.builtin.copy:
-    src: "{{ openbao_plugin_cache }}/openbao-apt-key.asc"
+    src: "{{ openbao_plugin_cache }}/openbao-apt-key-{{ openbao_apt_key_fingerprint }}.asc"
     dest: "{{ openbao_apt_keyring }}"
     remote_src: true
     owner: root
     group: root
     mode: "0644"
-  ignore_errors: "{{ ansible_check_mode }}"
+  when: not openbao_fresh_check
 
 - name: OpenBao apt repository
   ansible.builtin.deb822_repository:
@@ -64,30 +61,34 @@
     components: [main]
     signed_by: "{{ openbao_apt_keyring }}"
   register: openbao_apt_repo
-  ignore_errors: "{{ ansible_check_mode }}"
+  when: not openbao_fresh_check
 
 - name: Install the extra packages and OpenBao {{ openbao_version }}
   ansible.builtin.apt:
     name: "{{ ['openbao=' ~ openbao_version] + openbao_packages_extra + (['polkitd'] if openbao_pcsc_access else []) }}"
     state: present
     update_cache: "{{ openbao_apt_repo is changed }}"
+    # The package is held: a new openbao_version is the upgrade
+    allow_change_held_packages: true
     allow_downgrade: false
-  ignore_errors: "{{ ansible_check_mode }}"
+  when: not openbao_fresh_check
 
 - name: Hold the OpenBao version (an upgrade is a change of openbao_version)
   ansible.builtin.dpkg_selections:
     name: openbao
     selection: hold
-  ignore_errors: "{{ ansible_check_mode }}"
+  when: not openbao_fresh_check
 
 - name: Extra groups for the openbao user
   ansible.builtin.user:
     name: openbao
     groups: "{{ openbao_user_groups }}"
     append: true
-  when: openbao_user_groups | length > 0
+  when:
+    - openbao_user_groups | length > 0
+    - not openbao_fresh_check
+  register: openbao_changed_groups
   notify: Restart OpenBao
-  ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Let the openbao user reach pcscd
   ansible.builtin.copy:
@@ -104,5 +105,14 @@
     owner: root
     group: root
     mode: "0644"
-  when: openbao_pcsc_access
-  ignore_errors: "{{ ansible_check_mode }}"
+  when:
+    - openbao_pcsc_access
+    - not openbao_fresh_check
+
+# A restart handler only for a service already running: a first start is one start (one HSM login), not two
+- name: Is OpenBao running before this run
+  ansible.builtin.systemd_service:
+    name: openbao
+  register: openbao_active_before
+  failed_when: false
+  check_mode: false

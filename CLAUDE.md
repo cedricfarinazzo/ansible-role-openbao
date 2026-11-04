@@ -10,13 +10,13 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 
 - `defaults/main.yml` — every user-facing variable (`openbao_*`), with its generic default.
 - `vars/main.yml` — internal paths, the plugin stanzas, the assembled configuration (`openbao_config`, JSON), the SAN list, the local API address.
-- `tasks/main.yml` — `validate.yml` (every input), `plugins.yml` (download with checksum, unpack, binary sha256 asserted; before any install), `install.yml` (key fingerprint checked, deb822 repository, exact version held, extra packages, groups, polkit rule), `tls.yml` (self-signed on the host), `config.yml` (plugin binaries, config validated by `bao operator validate-config`, env file root 0400 with `no_log`, `client.env`, token script), then the service and a wait on `/v1/sys/health`.
+- `tasks/main.yml` — `validate.yml` (every input), `plugins.yml` (is OpenBao installed; download with checksum, unpack per checksum, binary sha256 asserted; before any install), `install.yml` (key fingerprint checked, deb822 repository, exact version held and upgradable, extra packages, groups, polkit rule, was the service running), `tls.yml` (self-signed on the host), `config.yml` (plugin binaries, config validated by `bao operator validate-config`, env file root 0400 with `no_log`, restart drop-in, `client.env`, scripts); then, when a start is due, the PKCS#11 OAEP check (`openbao_pkcs11_oaep_check`), the start, the handlers (restart only a service that was running), the health wait and the running seal type.
 - `tasks/configure.yml` — post-init over the HTTP API (`uri`, `no_log` on every task with the token): read, then write only what differs.
 - `templates/openbao.env.j2` — systemd `EnvironmentFile`, values double-quoted.
-- `files/openbao-token-create` — one token from a token role, printed once.
-- `handlers/main.yml` — restart OpenBao.
+- `files/openbao-token-create` — one token from a token role, printed once; `files/openbao-pkcs11-oaep-check` — OAEP round trip on a PKCS#11 key with the PIN from `BAO_HSM_PIN`.
+- `handlers/main.yml` — daemon-reload (drop-in change), restart OpenBao (only if it was running before the run: a first start is one start).
 - `meta/main.yml` — Galaxy metadata; `platforms` lists exactly what CI tests.
-- `molecule/default/` — one scenario (docker driver, `geerlingguy/docker-<distro>-ansible`): `prepare/` makes a SoftHSM token with an RSA key (CKA_ID 03, label `seal`), runs the two failure paths (required env unset, wrong plugin checksum: nothing installed), then an install with `openbao_service_start: false` (not started, not enabled); `check` and `converge` follow; `verify/` checks files, the restart policy, a non-root client, the environment, init 3/2, the cluster port on loopback, post-init twice, the periodic token, a restart unsealing through the seal.
+- `molecule/default/` — one scenario (docker driver, `geerlingguy/docker-<distro>-ansible`). `prepare/`: SoftHSM token with an RSA key (CKA_ID 03, label `seal`); failure paths with nothing installed (required env unset, wrong plugin checksum); 2.7.1 installed with `openbao_service_start: false`; a wrong PIN stopped by the OAEP check (`CKR_PIN_INCORRECT`), OpenBao never started. `check`. `converge/`: the role (upgrade to the default version, one start), init once (test only: output kept root-only in `/root/molecule-init.json`), post-init; `idempotence` reruns all three and must change nothing. `verify/`: one start, files, restart policy, non-root client, environment, init 3/2, cluster port on loopback, post-init refuses without a token and a mount of another type, the periodic token, a restart unsealing through the seal.
 - `run-tests.sh` / `Makefile` — local Molecule entry points; several distros run in parallel, one log each in `.molecule-logs/`.
 - `requirements.yml` — collections the role needs at runtime (consumer ranges); `requirements-dev.txt` — controller tooling, exact pins; `molecule/default/collections.yml` — test pins.
 - `package.json`, `bun.lock`, `.releaserc.json` — semantic-release tooling only.
@@ -61,6 +61,10 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 - A held package reads `hold ok installed` in `${Status}`: test `${db:Status-Status}` (`installed`).
 - `molecule prepare` skips an instance it thinks prepared, even after `destroy`/`create`: `molecule prepare --force` when iterating; `run-tests.sh` (fresh state) is the proof.
 - The raft cluster port opens only once raft runs (after init): check it after `bao operator init`.
+
+- pkcs11-tool names SHA-1 `SHA-1` as a hash but `MGF1-SHA1` as an MGF (`Unknown PKCS11 mechanism "SHA1"`); the other hashes have no dash.
+- A failure-path test must name the cause it expects (e.g. `CKR_PIN_INCORRECT`): the wrong-PIN test once passed on an unrelated script error.
+- `-e name=false` on the command line is the string `"false"`: a boolean extra var is passed as JSON, `-e '{"name": false}'`.
 
 ## Self Improvement Loop
 

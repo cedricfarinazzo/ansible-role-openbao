@@ -16,6 +16,16 @@
         executable: /bin/bash
       changed_when: false
 
+    - name: The first converge started OpenBao once (one HSM login), not start then restart
+      ansible.builtin.shell: |
+        set -o pipefail
+        journalctl -u openbao --no-pager -o cat | grep -c '^Started openbao.service'
+      args:
+        executable: /bin/bash
+      register: molecule_starts
+      changed_when: false
+      failed_when: molecule_starts.stdout != '1'
+
     - name: Secret and config files have their owners and modes
       ansible.builtin.command: stat -c '%n %U:%G %a' /etc/openbao/openbao.env /etc/openbao/openbao.hcl /opt/openbao/tls/tls.key
       register: molecule_stat
@@ -35,7 +45,7 @@
       failed_when: molecule_san.stdout != 'X509v3SubjectAlternativeName:IPAddress:127.0.0.1,DNS:localhost,DNS:openbao.example.org,IPAddress:192.0.2.10'
 
     - name: The restart policy and its limits are applied
-      ansible.builtin.command: systemctl show openbao -p Restart -p StartLimitBurst -p StartLimitIntervalUSec
+      ansible.builtin.command: systemctl show openbao -p Restart -p StartLimitBurst -p StartLimitIntervalUSec  # noqa: command-instead-of-module
       register: molecule_unit
       changed_when: false
       failed_when: molecule_unit.stdout_lines | sort != ['Restart=no', 'StartLimitBurst=3', 'StartLimitIntervalUSec=2min']
@@ -60,19 +70,16 @@
       changed_when: false
       failed_when: molecule_env.stdout != 'MOLECULE_QUOTED=a "b" $c \d'
 
-    # --- init (3 recovery shares, threshold 2), then the post-init part ---
-    - name: Initialize with the PKCS#11 seal
-      ansible.builtin.shell: >-
-        {{ molecule_bao }} operator init -recovery-shares=3 -recovery-threshold=2 -format=json
-      args:
-        executable: /bin/bash
+    # --- after converge's init (3 recovery shares, threshold 2) and post-init ---
+    - name: Read the test instance's root token (converge kept it, test only)
+      ansible.builtin.slurp:
+        src: /root/molecule-init.json
       register: molecule_init
-      changed_when: true
       no_log: true
 
     - name: Root token of the test instance
       ansible.builtin.set_fact:
-        molecule_root: "{{ (molecule_init.stdout | from_json).root_token }}"
+        molecule_root: "{{ (molecule_init.content | b64decode | from_json).root_token }}"
       no_log: true
 
     - name: Unsealed by the seal, recovery 3 of 2
@@ -113,19 +120,22 @@
           ansible.builtin.assert:
             that: ansible_failed_task.name == 'Assert a root token is given at run time'
 
-    - name: Post-init configuration
-      ansible.builtin.include_role:
-        name: ../../../../ansible-role-openbao
-        tasks_from: configure
-      vars:
-        openbao_root_token: "{{ molecule_root }}"
-
-    - name: Post-init configuration again changes nothing
-      ansible.builtin.include_role:
-        name: ../../../../ansible-role-openbao
-        tasks_from: configure
-      vars:
-        openbao_root_token: "{{ molecule_root }}"
+    - name: A wanted path mounted with another type is refused
+      block:
+        - name: Ask for kv/ as a transit engine
+          ansible.builtin.include_role:
+            name: ../../../../ansible-role-openbao
+            tasks_from: configure
+          vars:
+            openbao_root_token: "{{ molecule_root }}"
+            openbao_secrets_engines: [{path: kv, type: transit}]
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: configure accepted a mount of another type
+      rescue:
+        - name: It stopped on the type check
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Assert an existing mount at a wanted path has the wanted type'
 
     # --- the periodic token: transit encrypt and decrypt, nothing else ---
     - name: A token from the role, by the token script

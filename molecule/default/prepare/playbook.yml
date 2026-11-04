@@ -8,26 +8,16 @@
         update_cache: true
         cache_valid_time: 3600
 
-    - name: SoftHSM token
-      ansible.builtin.command: >-
+    - name: SoftHSM token with an RSA key pair (CKA_ID 03, label seal)
+      ansible.builtin.shell: |
+        set -euo pipefail
         softhsm2-util --init-token --free --label molecule --so-pin 1111 --pin {{ molecule_hsm_pin }}
+        pkcs11-tool --module {{ molecule_hsm_lib }} --token-label molecule --login --pin {{ molecule_hsm_pin }} \
+          --keypairgen --key-type rsa:2048 --id 03 --label seal
+        touch /var/lib/softhsm/tokens/.molecule-token
       args:
+        executable: /bin/bash
         creates: /var/lib/softhsm/tokens/.molecule-token
-      register: molecule_token
-
-    - name: RSA key pair with CKA_ID 03
-      ansible.builtin.command: >-
-        pkcs11-tool --module {{ molecule_hsm_lib }} --token-label molecule --login --pin {{ molecule_hsm_pin }}
-        --keypairgen --key-type rsa:2048 --id 03 --label seal
-      when: molecule_token is changed
-      changed_when: true
-
-    - name: Mark the token as made
-      ansible.builtin.file:
-        path: /var/lib/softhsm/tokens/.molecule-token
-        state: touch
-        mode: "0644"
-      when: molecule_token is changed
 
     - name: The token is readable by its group (the role adds openbao to it)
       ansible.builtin.file:
@@ -91,14 +81,51 @@
         name: ../../../../ansible-role-openbao
       vars:
         openbao_service_start: false
+        # An older release, held: converge then upgrades it to the default version
+        openbao_version: "2.7.1"
+        # A different config: converge's change notifies the restart handler on a stopped service
+        openbao_ui: true
 
     - name: Installed, configured, neither started nor enabled
       ansible.builtin.shell: |
         set -o pipefail
         test "$(dpkg-query -W -f '${db:Status-Status}' openbao)" = installed
+        test "$(dpkg-query -W -f '${Version}' openbao)" = 2.7.1
         test -s /etc/openbao/openbao.hcl
         ! systemctl is-active --quiet openbao
         ! systemctl is-enabled --quiet openbao
       args:
         executable: /bin/bash
       changed_when: false
+
+# A wrong PIN: the OAEP check stops the run before any start, so OpenBao never retries the seal
+- name: Wrong PIN, stopped by the OAEP check
+  hosts: all
+  tasks:
+    - name: Run the role with a wrong PIN
+      block:
+        - name: Run it
+          ansible.builtin.include_role:
+            name: ../../../../ansible-role-openbao
+          vars:
+            openbao_version: "2.7.1"
+            openbao_ui: true
+            openbao_environment:
+              BAO_HSM_PIN: "999999"
+              MOLECULE_QUOTED: x
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: The role started OpenBao with a wrong PIN
+      rescue:
+        - name: It stopped on the OAEP check
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Stop before any start if the OAEP check failed (OpenBao never retried the seal)'
+              - "'CKR_PIN_INCORRECT' in ansible_failed_result.msg"
+              - "'999999' not in ansible_failed_result.msg"
+
+    - name: OpenBao was never started
+      ansible.builtin.command: systemctl is-active openbao  # noqa: command-instead-of-module
+      register: molecule_active
+      changed_when: false
+      failed_when: molecule_active.stdout != 'inactive'

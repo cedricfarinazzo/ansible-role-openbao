@@ -40,6 +40,14 @@ openbao_config: >-
 openbao_tls_sans: >-
   {{ (['IP:127.0.0.1', 'DNS:localhost'] + openbao_tls_subject_alt_names) | unique }}
 
+# A start is due when OpenBao is not running, or when a change notified its restart
+openbao_start_due: >-
+  {{ openbao_active_before.status.ActiveState | default('') != 'active'
+     or ([openbao_changed_groups | default({}), openbao_changed_tls_key | default({}),
+          openbao_changed_tls_cert | default({}), openbao_changed_plugins | default({}),
+          openbao_changed_config | default({}), openbao_changed_env | default({})]
+         | select('changed') | list | length > 0) }}
+
 # Where the role itself reaches the API on the host: the listener's address, or loopback for a wildcard
 openbao_listener_host: "{{ openbao_listener_address.rsplit(':', 1) | first }}"
 openbao_listener_port: "{{ openbao_listener_address.rsplit(':', 1) | last }}"

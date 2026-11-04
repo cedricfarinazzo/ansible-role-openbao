@@ -27,27 +27,49 @@
 - name: Assert OpenBao is initialized, unsealed and active
   ansible.builtin.uri:
     url: "{{ openbao_addr }}/v1/sys/health"
-    ca_path: "{{ openbao_tls_cert_file }}"
+    ca_path: "{{ openbao_tls_ca_file }}"
     status_code: 200
 
 - name: Read the mounts
   ansible.builtin.uri:
     url: "{{ openbao_addr }}/v1/sys/mounts"
-    ca_path: "{{ openbao_tls_cert_file }}"
+    ca_path: "{{ openbao_tls_ca_file }}"
     headers: {X-Vault-Token: "{{ openbao_root_token }}"}
   register: openbao_mounts
   no_log: true
 
-- name: Enable each secrets engine
+- name: Engines and existing mounts, paths without a trailing slash
+  ansible.builtin.set_fact:
+    openbao_engines: >-
+      {%- set out = [] -%}
+      {%- for e in openbao_secrets_engines -%}
+      {%- set _ = out.append(e | combine({'path': e.path | regex_replace('/+$', '')})) -%}
+      {%- endfor -%}
+      {{ out }}
+    openbao_mounts_existing: >-
+      {{ dict(openbao_mounts.json.data.keys() | map('regex_replace', '/+$', '') | list
+              | zip(openbao_mounts.json.data.values() | map(attribute='type') | list)) }}
+  no_log: true
+
+- name: Assert an existing mount at a wanted path has the wanted type
+  ansible.builtin.assert:
+    that: openbao_mounts_existing[item.path] == item.type
+    fail_msg: "{{ item.path }} is mounted as {{ openbao_mounts_existing[item.path] }}, not {{ item.type }}: fix the list or unmount it"
+    quiet: true
+  loop: "{{ openbao_engines | selectattr('path', 'in', openbao_mounts_existing.keys() | list) | list }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Enable each missing secrets engine
   ansible.builtin.uri:
     url: "{{ openbao_addr }}/v1/sys/mounts/{{ item.path }}"
     method: POST
-    ca_path: "{{ openbao_tls_cert_file }}"
+    ca_path: "{{ openbao_tls_ca_file }}"
     headers: {X-Vault-Token: "{{ openbao_root_token }}"}
     body_format: json
     body: {type: "{{ item.type }}", description: "{{ item.description | default('') }}"}
     status_code: 204
-  loop: "{{ openbao_secrets_engines | rejectattr('path', 'in', openbao_mounts.json.data.keys() | map('regex_replace', '/$', '') | list) | list }}"
+  loop: "{{ openbao_engines | rejectattr('path', 'in', openbao_mounts_existing.keys() | list) | list }}"
   loop_control:
     label: "{{ item.path }} ({{ item.type }})"
   changed_when: true
@@ -56,7 +78,7 @@
 - name: Read each transit key
   ansible.builtin.uri:
     url: "{{ openbao_addr }}/v1/{{ item.mount }}/keys/{{ item.name }}"
-    ca_path: "{{ openbao_tls_cert_file }}"
+    ca_path: "{{ openbao_tls_ca_file }}"
     headers: {X-Vault-Token: "{{ openbao_root_token }}"}
     status_code: [200, 404]
   loop: "{{ openbao_transit_keys }}"
@@ -69,7 +91,7 @@
   ansible.builtin.uri:
     url: "{{ openbao_addr }}/v1/{{ item.item.mount }}/keys/{{ item.item.name }}"
     method: POST
-    ca_path: "{{ openbao_tls_cert_file }}"
+    ca_path: "{{ openbao_tls_ca_file }}"
     headers: {X-Vault-Token: "{{ openbao_root_token }}"}
     body_format: json
     body: {type: "{{ item.item.type | default('aes256-gcm96') }}"}
@@ -83,7 +105,7 @@
 - name: Read each policy
   ansible.builtin.uri:
     url: "{{ openbao_addr }}/v1/sys/policies/acl/{{ item.name }}"
-    ca_path: "{{ openbao_tls_cert_file }}"
+    ca_path: "{{ openbao_tls_ca_file }}"
     headers: {X-Vault-Token: "{{ openbao_root_token }}"}
     status_code: [200, 404]
   loop: "{{ openbao_policies }}"
@@ -96,7 +118,7 @@
   ansible.builtin.uri:
     url: "{{ openbao_addr }}/v1/sys/policies/acl/{{ item.item.name }}"
     method: PUT
-    ca_path: "{{ openbao_tls_cert_file }}"
+    ca_path: "{{ openbao_tls_ca_file }}"
     headers: {X-Vault-Token: "{{ openbao_root_token }}"}
     body_format: json
     body: {policy: "{{ item.item.rules }}"}
@@ -111,7 +133,7 @@
 - name: Read each token role
   ansible.builtin.uri:
     url: "{{ openbao_addr }}/v1/auth/token/roles/{{ item.name }}"
-    ca_path: "{{ openbao_tls_cert_file }}"
+    ca_path: "{{ openbao_tls_ca_file }}"
     headers: {X-Vault-Token: "{{ openbao_root_token }}"}
     status_code: [200, 404]
   loop: "{{ openbao_token_roles }}"
@@ -124,7 +146,7 @@
   ansible.builtin.uri:
     url: "{{ openbao_addr }}/v1/auth/token/roles/{{ item.item.name }}"
     method: POST
-    ca_path: "{{ openbao_tls_cert_file }}"
+    ca_path: "{{ openbao_tls_ca_file }}"
     headers: {X-Vault-Token: "{{ openbao_root_token }}"}
     body_format: json
     body: "{{ openbao_role_body }}"

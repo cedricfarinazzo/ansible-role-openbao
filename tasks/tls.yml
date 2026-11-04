@@ -7,8 +7,9 @@
     owner: openbao
     group: openbao
     mode: "0755"
-  when: openbao_tls_self_signed
-  ignore_errors: "{{ ansible_check_mode }}"
+  when:
+    - openbao_tls_self_signed
+    - not openbao_fresh_check
 
 - name: TLS private key
   community.crypto.openssl_privatekey:
@@ -18,9 +19,11 @@
     owner: openbao
     group: openbao
     mode: "0600"
-  when: openbao_tls_self_signed
+  when:
+    - openbao_tls_self_signed
+    - not openbao_fresh_check
+  register: openbao_changed_tls_key
   notify: Restart OpenBao
-  ignore_errors: "{{ ansible_check_mode }}"
 
 - name: TLS certificate request
   community.crypto.openssl_csr_pipe:
@@ -46,4 +49,5 @@
     group: openbao
     mode: "0644"
   when: openbao_tls_self_signed and not ansible_check_mode
+  register: openbao_changed_tls_cert
   notify: Restart OpenBao

@@ -27,6 +27,8 @@ openbao_tls_self_signed: true
 openbao_tls_dir: /opt/openbao/tls
 openbao_tls_cert_file: "{{ openbao_tls_dir }}/tls.crt"
 openbao_tls_key_file: "{{ openbao_tls_dir }}/tls.key"
+# CA that clients (and the role) trust: the certificate itself when self-signed, else your CA bundle
+openbao_tls_ca_file: "{{ openbao_tls_cert_file }}"
 openbao_tls_common_name: "{{ ansible_facts['fqdn'] }}"
 # e.g. ["IP:192.0.2.10", "DNS:bao.example.org"]; 127.0.0.1 and localhost are always added
 openbao_tls_subject_alt_names: []
@@ -62,6 +64,11 @@ openbao_service_start: true
 openbao_service_restart: on-failure
 openbao_service_start_limit_interval_sec: 60
 openbao_service_start_limit_burst: 3
+
+# Before each start or restart: an RSA-OAEP round trip on the seal's PKCS#11 key, as the openbao user with
+# the server environment (one PIN login). A failure stops the run before OpenBao retries the seal itself.
+# Needs pkcs11-tool (opensc) and an RSA key; reads lib, slot or token_label, key_id, rsa_oaep_hash from openbao_seal.
+openbao_pkcs11_oaep_check: false
 
 # --- Post-init configuration (tasks_from: configure) --------------------------
 # Defaults to the listener on this host
