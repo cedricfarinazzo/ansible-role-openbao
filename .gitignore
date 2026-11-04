@@ -1,0 +1,30 @@
+# Python virtual environment
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Molecule
+.molecule/
+.pytest_cache/
+
+# Ansible
+*.retry
+.ansible
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS specific files
+.DS_Store
+Thumbs.db
+.ansible/
+
+# semantic-release tooling
+node_modules/
+
+# Logs of parallel Molecule runs (run-tests.sh)
+.molecule-logs/
