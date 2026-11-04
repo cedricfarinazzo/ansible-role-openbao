@@ -1,0 +1,88 @@
+---
+dependency:
+  name: galaxy
+driver:
+  name: docker
+platforms:
+  # Name carries the distribution, so several distributions run side by side
+  - name: openbao-${MOLECULE_DISTRO:-debian13}
+    hostname: openbao
+    image: "geerlingguy/docker-${MOLECULE_DISTRO:-debian13}-ansible:latest"
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+provisioner:
+  name: ansible
+  playbooks:
+    prepare: prepare/playbook.yml
+    converge: converge/playbook.yml
+    verify: verify/playbook.yml
+  inventory:
+    group_vars:
+      all:
+        ansible_become: false
+        # SoftHSM stands in for the HSM: a token "molecule", an RSA key with CKA_ID 03 (prepare)
+        molecule_hsm_lib: /usr/lib/softhsm/libsofthsm2.so
+        molecule_hsm_pin: "2222"
+        molecule_plugin_arch: "{{ {'x86_64': 'amd64_v1', 'aarch64': 'arm64_v8'}[ansible_facts['architecture']] }}"
+        molecule_plugin_sums:
+          amd64_v1:
+            archive: c112c670e1bcca7a7b7625b13c0ecf1a43a62cd2651d29bf23befb2ad47c49bf
+            binary: 96fefa80e721551725ea01be79b0dae0f3951f15f01291fd87846d5e45475be6
+          arm64_v8:
+            archive: 9485217db9f2797fec0c56037e64559cdef00e0a3a0c7cc34da6492f402e5d59
+            binary: 7654edf4f5438e0d798ef6f369526f99722c2c2cab3c83b741539e120348b213
+        openbao_api_addr: https://127.0.0.1:8200
+        openbao_listener_address: 127.0.0.1:8200
+        openbao_tls_subject_alt_names: ["DNS:openbao.example.org", "IP:192.0.2.10"]
+        openbao_user_groups: [softhsm]
+        openbao_plugins:
+          - type: kms
+            name: pkcs11
+            version: v0.3.0
+            url: >-
+              https://github.com/openbao/openbao-plugins/releases/download/kms-pkcs11-v0.3.0/openbao-plugin-kms-pkcs11_linux_{{ molecule_plugin_arch }}.tar.gz
+            checksum: "{{ molecule_plugin_sums[molecule_plugin_arch].archive }}"
+            binary: openbao-plugin-kms-pkcs11_linux_{{ molecule_plugin_arch }}
+            binary_sha256: "{{ molecule_plugin_sums[molecule_plugin_arch].binary }}"
+        # SoftHSM 2.6 does RSA-OAEP with SHA-1 only; a real HSM keeps the sha256 default
+        openbao_seal:
+          pkcs11:
+            lib: "{{ molecule_hsm_lib }}"
+            token_label: molecule
+            key_id: "03"
+            rsa_oaep_hash: sha1
+        openbao_environment:
+          BAO_HSM_PIN: "{{ molecule_hsm_pin }}"
+          # Quotes, a dollar and a backslash reach the server unchanged (verify)
+          MOLECULE_QUOTED: 'a "b" $$c \d'
+        openbao_environment_required: [BAO_HSM_PIN]
+        openbao_token_script: true
+        openbao_secrets_engines:
+          - {path: transit, type: transit, description: Auto-unseal of other OpenBao servers}
+        openbao_transit_keys:
+          - {mount: transit, name: autounseal}
+        openbao_policies:
+          - name: autounseal
+            rules: |
+              path "transit/encrypt/autounseal" { capabilities = ["update"] }
+              path "transit/decrypt/autounseal" { capabilities = ["update"] }
+        openbao_token_roles:
+          - {name: autounseal, allowed_policies: [autounseal], period: 86400, orphan: true}
+verifier:
+  name: ansible
+scenario:
+  name: default
+  test_sequence:
+    - dependency
+    - destroy
+    - create
+    - prepare
+    - check
+    - converge
+    - verify
+    - idempotence
+    - destroy

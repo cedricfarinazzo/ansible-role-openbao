@@ -1,0 +1,69 @@
+---
+# --- Install -----------------------------------------------------------------
+# Exact OpenBao version, from the official apt repository
+openbao_version: "2.7.2"
+openbao_apt_repo_url: https://pkgs.openbao.org/deb
+openbao_apt_key_url: https://openbao.org/assets/openbao-gpg-pub-20240618.asc
+# The downloaded key must carry this fingerprint, or nothing is installed
+openbao_apt_key_fingerprint: 66D15FDD87287219C8E15478D200CD702853E6D0
+# More packages, e.g. a PKCS#11 module and its daemon: [pcscd, ykcs11, opensc]
+openbao_packages_extra: []
+# Extra groups for the openbao user (e.g. softhsm, to read a SoftHSM token)
+openbao_user_groups: []
+# polkit rule letting the openbao user talk to pcscd (a smart card or a YubiKey)
+openbao_pcsc_access: false
+
+# --- External plugins (manual download, checksum checked before any install) --
+openbao_plugin_directory: /opt/openbao/plugins
+# Each: {type, name, version, url, checksum, binary, binary_sha256, args?, env?}
+#   url: a .tar.gz release archive; checksum: its sha256; binary: the file in it;
+#   binary_sha256: the binary's sha256, rechecked by OpenBao before each start
+openbao_plugins: []
+
+# --- TLS ---------------------------------------------------------------------
+# true: a self-signed certificate generated on the host (the key never leaves it)
+# false: supply openbao_tls_cert_file and openbao_tls_key_file yourself
+openbao_tls_self_signed: true
+openbao_tls_dir: /opt/openbao/tls
+openbao_tls_cert_file: "{{ openbao_tls_dir }}/tls.crt"
+openbao_tls_key_file: "{{ openbao_tls_dir }}/tls.key"
+openbao_tls_common_name: "{{ ansible_facts['fqdn'] }}"
+# e.g. ["IP:192.0.2.10", "DNS:bao.example.org"]; 127.0.0.1 and localhost are always added
+openbao_tls_subject_alt_names: []
+openbao_tls_valid_days: 3650
+
+# --- Server configuration ------------------------------------------------------
+openbao_listener_address: "0.0.0.0:8200"
+# Address clients use, e.g. https://192.0.2.10:8200 (required)
+openbao_api_addr: ""
+openbao_cluster_addr: "https://127.0.0.1:8201"
+openbao_storage:
+  raft:
+    path: /opt/openbao/data
+    node_id: "{{ inventory_hostname }}"
+# Seal stanza, e.g. {pkcs11: {lib: ..., slot: "0", key_id: "03"}}; {} = Shamir keys
+openbao_seal: {}
+openbao_ui: false
+# Merged last into the configuration (any other top-level OpenBao setting)
+openbao_config_extra: {}
+
+# Environment of the server (/etc/openbao/openbao.env, root 0400), e.g. {BAO_HSM_PIN: ...}
+openbao_environment: {}
+# Names that must be set and non-empty in openbao_environment, or the role stops
+openbao_environment_required: []
+
+# --- Post-init configuration (tasks_from: configure) --------------------------
+# Defaults to the listener on this host
+openbao_addr: "{{ openbao_local_addr }}"
+# Given at run time only (-e or a vars prompt); never stored by the role
+openbao_root_token: ""
+# Each: {path, type, description?}
+openbao_secrets_engines: []
+# Each: {mount, name, type?} (transit keys; type defaults to aes256-gcm96)
+openbao_transit_keys: []
+# Each: {name, rules} (rules: the policy in HCL)
+openbao_policies: []
+# Each: {name, allowed_policies: [...], period?, orphan?, renewable?}
+openbao_token_roles: []
+# Install openbao-token-create (a periodic or role token, printed once to stdout)
+openbao_token_script: false

@@ -1,0 +1,20 @@
+#!/bin/sh
+# Creates a token from a token role and prints it once on stdout, nothing else.
+# The caller's token comes from BAO_TOKEN, else a prompt that does not echo.
+set -eu
+
+role=${1:?usage: openbao-token-create <token role>}
+# shellcheck source=/dev/null
+. /etc/openbao/client.env
+
+if [ -z "${BAO_TOKEN:-}" ]; then
+  printf 'Token allowed to use the role %s: ' "$role" >&2
+  trap 'stty echo' EXIT INT TERM
+  stty -echo
+  IFS= read -r BAO_TOKEN
+  stty echo
+  printf '\n' >&2
+  export BAO_TOKEN
+fi
+
+exec bao token create -role="$role" -field=token

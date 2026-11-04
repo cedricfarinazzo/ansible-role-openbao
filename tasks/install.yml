@@ -1,0 +1,108 @@
+---
+- name: Tools for the key check, the repository and the certificate
+  ansible.builtin.apt:
+    name: [gnupg, ca-certificates, python3-debian, python3-cryptography]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Keyring directory
+  ansible.builtin.file:
+    path: "{{ openbao_apt_keyring | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download the repository key
+  ansible.builtin.get_url:
+    url: "{{ openbao_apt_key_url }}"
+    dest: "{{ openbao_plugin_cache }}/openbao-apt-key.asc"
+    owner: root
+    group: root
+    mode: "0644"
+  register: openbao_apt_key_download
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Read the key's fingerprint
+  ansible.builtin.command:
+    argv: [gpg, --show-keys, --with-colons, "{{ openbao_plugin_cache }}/openbao-apt-key.asc"]
+  register: openbao_apt_key_show
+  changed_when: false
+  check_mode: false
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Assert the key is the expected one
+  ansible.builtin.assert:
+    # One primary key only, and its fingerprint (the line after "pub") is the pinned one
+    that:
+      - openbao_apt_key_show.stdout_lines | select('match', '^pub:') | list | length == 1
+      - >-
+        openbao_apt_key_show.stdout_lines[openbao_apt_key_show.stdout_lines.index(
+        openbao_apt_key_show.stdout_lines | select('match', '^pub:') | first) + 1]
+        == 'fpr:::::::::' ~ openbao_apt_key_fingerprint ~ ':'
+    fail_msg: "The key at {{ openbao_apt_key_url }} is not {{ openbao_apt_key_fingerprint }} alone: nothing installed"
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Install the checked key for apt
+  ansible.builtin.copy:
+    src: "{{ openbao_plugin_cache }}/openbao-apt-key.asc"
+    dest: "{{ openbao_apt_keyring }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: OpenBao apt repository
+  ansible.builtin.deb822_repository:
+    name: openbao
+    types: [deb]
+    uris: ["{{ openbao_apt_repo_url }}"]
+    suites: [stable]
+    components: [main]
+    signed_by: "{{ openbao_apt_keyring }}"
+  register: openbao_apt_repo
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Install the extra packages and OpenBao {{ openbao_version }}
+  ansible.builtin.apt:
+    name: "{{ ['openbao=' ~ openbao_version] + openbao_packages_extra + (['polkitd'] if openbao_pcsc_access else []) }}"
+    state: present
+    update_cache: "{{ openbao_apt_repo is changed }}"
+    allow_downgrade: false
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Hold the OpenBao version (an upgrade is a change of openbao_version)
+  ansible.builtin.dpkg_selections:
+    name: openbao
+    selection: hold
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Extra groups for the openbao user
+  ansible.builtin.user:
+    name: openbao
+    groups: "{{ openbao_user_groups }}"
+    append: true
+  when: openbao_user_groups | length > 0
+  notify: Restart OpenBao
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Let the openbao user reach pcscd
+  ansible.builtin.copy:
+    dest: /etc/polkit-1/rules.d/60-openbao-pcsc.rules
+    content: |
+      // Managed by Ansible: OpenBao's seal talks to the card through pcscd
+      polkit.addRule(function(action, subject) {
+        if ((action.id == "org.debian.pcsc-lite.access_pcsc" ||
+             action.id == "org.debian.pcsc-lite.access_card") &&
+            subject.user == "openbao") {
+          return polkit.Result.YES;
+        }
+      });
+    owner: root
+    group: root
+    mode: "0644"
+  when: openbao_pcsc_access
+  ignore_errors: "{{ ansible_check_mode }}"

@@ -1,0 +1,46 @@
+---
+openbao_plugin_types: [auth, database, kms, secret]
+openbao_env_file: /etc/openbao/openbao.env
+openbao_config_file: /etc/openbao/openbao.hcl
+openbao_client_env_file: /etc/openbao/client.env
+openbao_plugin_cache: /var/cache/openbao/plugins
+openbao_apt_keyring: /etc/apt/keyrings/openbao.asc
+
+# The plugin stanzas: [{<type>: {<name>: {command, version, sha256sum, args?, env?}}}]
+openbao_plugin_stanzas: >-
+  {%- set out = [] -%}
+  {%- for p in openbao_plugins -%}
+  {%- set body = {'command': p.binary, 'version': p.version, 'sha256sum': p.binary_sha256} -%}
+  {%- if p.args is defined -%}{%- set _ = body.update({'args': p.args}) -%}{%- endif -%}
+  {%- if p.env is defined -%}{%- set _ = body.update({'env': p.env}) -%}{%- endif -%}
+  {%- set _ = out.append({p.type: {p.name: body}}) -%}
+  {%- endfor -%}
+  {{ out | to_json }}
+
+openbao_config_base:
+  ui: "{{ openbao_ui }}"
+  api_addr: "{{ openbao_api_addr }}"
+  cluster_addr: "{{ openbao_cluster_addr }}"
+  storage: "{{ openbao_storage }}"
+  listener:
+    - tcp:
+        address: "{{ openbao_listener_address }}"
+        tls_cert_file: "{{ openbao_tls_cert_file }}"
+        tls_key_file: "{{ openbao_tls_key_file }}"
+  plugin_directory: "{{ openbao_plugin_directory }}"
+
+# JSON is valid OpenBao configuration, also in a .hcl file
+openbao_config: >-
+  {{ openbao_config_base
+     | combine({'plugin': openbao_plugin_stanzas | from_json} if openbao_plugins | length > 0 else {})
+     | combine({'seal': openbao_seal} if openbao_seal | length > 0 else {})
+     | combine(openbao_config_extra, recursive=true) }}
+
+openbao_tls_sans: >-
+  {{ (['IP:127.0.0.1', 'DNS:localhost'] + openbao_tls_subject_alt_names) | unique }}
+
+# Where the role itself reaches the API on the host: the listener's address, or loopback for a wildcard
+openbao_listener_host: "{{ openbao_listener_address.rsplit(':', 1) | first }}"
+openbao_listener_port: "{{ openbao_listener_address.rsplit(':', 1) | last }}"
+openbao_local_addr: >-
+  https://{{ '127.0.0.1' if openbao_listener_host in ['', '0.0.0.0', '[::]'] else openbao_listener_host }}:{{ openbao_listener_port }}

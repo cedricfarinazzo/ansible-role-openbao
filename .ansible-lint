@@ -1,0 +1,54 @@
+---
+# .ansible-lint configuration
+profile: production
+
+# List of additional kind:pattern to be added at the top of the default
+# match list, first match determines the file kind.
+kinds:
+  - yaml: "**/*.yaml-too"
+
+# List of additional collections to allow in only-builtins rule.
+# only_builtins_allow_collections:
+#   - example_ns.example_collection
+
+# List of additional modules to allow in only-builtins rule.
+# only_builtins_allow_modules:
+#   - example_module
+
+# Allow certain rules to be ignored in specific files
+skip_list:
+  - yaml[line-length]  # Allow long lines in some cases
+
+# Report only a subset of tags and fully ignore any others
+# tags:
+#   - jinja[spacing]
+
+# Ansible-lint is able to recognize and load skip rules stored inside
+# `.ansible-lint-ignore` files or `# noqa` comments.
+use_default_rules: true
+
+# Enable checking of loop variable prefixes in roles
+loop_var_prefix: "^(__|{role}_)"
+
+# Enable offline mode to disable rules that require network access
+offline: false
+
+# Return success if number of failures does not exceed this threshold
+# max_violations:
+#   error: 0
+#   warning: 0
+
+# Uncomment to enforce action validation with tasks, usually is not
+# needed as Ansible syntax check also covers it.
+# skip_action_validation: false
+
+# List of yamllint rules to disable (or enable)
+# yamllint_config_file: .yamllint.yaml
+
+exclude_paths:
+  - .cache/  # implicit unless exclude_paths is defined in config
+  - .github/
+  - molecule/
+  - tests/
+  - .venv/
+  - node_modules/

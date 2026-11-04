@@ -1,0 +1,189 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: true
+  vars:
+    molecule_bao: . /etc/openbao/client.env && bao
+  tasks:
+    # --- install, files, environment ---
+    - name: OpenBao runs at the pinned version, held
+      ansible.builtin.shell: |
+        set -o pipefail
+        systemctl is-active openbao
+        dpkg-query -W -f '${Version}' openbao | grep -qx 2.7.2
+        apt-mark showhold | grep -qx openbao
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Secret and config files have their owners and modes
+      ansible.builtin.command: stat -c '%n %U:%G %a' /etc/openbao/openbao.env /etc/openbao/openbao.hcl /opt/openbao/tls/tls.key
+      register: molecule_stat
+      changed_when: false
+      failed_when: >-
+        molecule_stat.stdout_lines != ['/etc/openbao/openbao.env root:root 400', '/etc/openbao/openbao.hcl root:openbao 640',
+        '/opt/openbao/tls/tls.key openbao:openbao 600']
+
+    - name: The certificate carries the default and the given names
+      ansible.builtin.shell: |
+        set -o pipefail
+        openssl x509 -in /opt/openbao/tls/tls.crt -noout -ext subjectAltName | tr -d ' \n'
+      args:
+        executable: /bin/bash
+      register: molecule_san
+      changed_when: false
+      failed_when: molecule_san.stdout != 'X509v3SubjectAlternativeName:IPAddress:127.0.0.1,DNS:localhost,DNS:openbao.example.org,IPAddress:192.0.2.10'
+
+    - name: The environment reaches the server unchanged
+      ansible.builtin.shell: |
+        set -o pipefail
+        tr '\0' '\n' < /proc/$(systemctl show -p MainPID --value openbao)/environ | grep '^MOLECULE_QUOTED='
+      args:
+        executable: /bin/bash
+      register: molecule_env
+      changed_when: false
+      failed_when: molecule_env.stdout != 'MOLECULE_QUOTED=a "b" $c \d'
+
+    # --- init (3 recovery shares, threshold 2), then the post-init part ---
+    - name: Initialize with the PKCS#11 seal
+      ansible.builtin.shell: >-
+        {{ molecule_bao }} operator init -recovery-shares=3 -recovery-threshold=2 -format=json
+      args:
+        executable: /bin/bash
+      register: molecule_init
+      changed_when: true
+      no_log: true
+
+    - name: Root token of the test instance
+      ansible.builtin.set_fact:
+        molecule_root: "{{ (molecule_init.stdout | from_json).root_token }}"
+      no_log: true
+
+    - name: Unsealed by the seal, recovery 3 of 2
+      ansible.builtin.shell: >-
+        {{ molecule_bao }} status -format=json
+      args:
+        executable: /bin/bash
+      register: molecule_status
+      changed_when: false
+      retries: 15
+      delay: 2
+      until: not (molecule_status.stdout | from_json).sealed
+      failed_when: >-
+        (molecule_status.stdout | from_json).type != 'pkcs11'
+        or (molecule_status.stdout | from_json).n != 3 or (molecule_status.stdout | from_json).t != 2
+
+    - name: The post-init part refuses to run without a root token
+      block:
+        - name: Run it without a token
+          ansible.builtin.include_role:
+            name: ../../../../ansible-role-openbao
+            tasks_from: configure
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: configure ran without a root token
+      rescue:
+        - name: It stopped on the token check
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Assert a root token is given at run time'
+
+    - name: Post-init configuration
+      ansible.builtin.include_role:
+        name: ../../../../ansible-role-openbao
+        tasks_from: configure
+      vars:
+        openbao_root_token: "{{ molecule_root }}"
+
+    - name: Post-init configuration again changes nothing
+      ansible.builtin.include_role:
+        name: ../../../../ansible-role-openbao
+        tasks_from: configure
+      vars:
+        openbao_root_token: "{{ molecule_root }}"
+
+    # --- the periodic token: transit encrypt and decrypt, nothing else ---
+    - name: A token from the role, by the token script
+      ansible.builtin.command: openbao-token-create autounseal
+      environment:
+        BAO_TOKEN: "{{ molecule_root }}"
+      register: molecule_token
+      changed_when: true
+      no_log: true
+
+    - name: The token is periodic, orphan, with the role's policy
+      ansible.builtin.shell: >-
+        {{ molecule_bao }} token lookup -format=json
+      args:
+        executable: /bin/bash
+      environment:
+        BAO_TOKEN: "{{ molecule_token.stdout }}"
+      register: molecule_lookup
+      changed_when: false
+      no_log: true
+
+    # A role's token_period makes the lease periodic; lookup shows no "period" for it (token_store.go)
+    - name: Renew the token
+      ansible.builtin.shell: >-
+        {{ molecule_bao }} token renew -format=json
+      args:
+        executable: /bin/bash
+      environment:
+        BAO_TOKEN: "{{ molecule_token.stdout }}"
+      register: molecule_renew
+      changed_when: false
+      no_log: true
+
+    - name: Check the token's properties
+      ansible.builtin.assert:
+        that:
+          - (molecule_lookup.stdout | from_json).data.creation_ttl == 86400
+          - (molecule_lookup.stdout | from_json).data.explicit_max_ttl == 0
+          - (molecule_lookup.stdout | from_json).data.orphan
+          - (molecule_lookup.stdout | from_json).data.role == 'autounseal'
+          - (molecule_lookup.stdout | from_json).data.policies | sort == ['autounseal', 'default']
+          - (molecule_renew.stdout | from_json).auth.lease_duration == 86400
+          - (molecule_renew.stdout | from_json).auth.renewable
+
+    - name: Transit encrypt then decrypt with that token
+      ansible.builtin.shell: |
+        set -o pipefail
+        . /etc/openbao/client.env
+        c=$(bao write -field=ciphertext transit/encrypt/autounseal plaintext=$(printf molecule | base64))
+        bao write -field=plaintext transit/decrypt/autounseal ciphertext="$c" | base64 -d
+      args:
+        executable: /bin/bash
+      environment:
+        BAO_TOKEN: "{{ molecule_token.stdout }}"
+      register: molecule_roundtrip
+      changed_when: false
+      failed_when: molecule_roundtrip.stdout != 'molecule'
+      no_log: true
+
+    - name: The token cannot read anything else
+      ansible.builtin.shell: >-
+        {{ molecule_bao }} secrets list
+      args:
+        executable: /bin/bash
+      environment:
+        BAO_TOKEN: "{{ molecule_token.stdout }}"
+      register: molecule_denied
+      changed_when: false
+      failed_when: molecule_denied.rc == 0 or 'permission denied' not in molecule_denied.stderr
+      no_log: true
+
+    # --- auto-unseal after a restart ---
+    - name: Restart OpenBao
+      ansible.builtin.systemd_service:
+        name: openbao
+        state: restarted
+
+    - name: Unsealed again by the seal alone
+      ansible.builtin.shell: >-
+        {{ molecule_bao }} status -format=json
+      args:
+        executable: /bin/bash
+      register: molecule_status
+      changed_when: false
+      retries: 15
+      delay: 2
+      until: molecule_status.rc == 0 and not (molecule_status.stdout | from_json).sealed

@@ -1,0 +1,54 @@
+---
+# Before any install: a wrong checksum stops the run with nothing installed
+- name: Download cache (plugins, repository key)
+  ansible.builtin.file:
+    path: "{{ openbao_plugin_cache }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Download each plugin archive, checksum checked
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}.tar.gz"
+    checksum: "sha256:{{ item.checksum }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ openbao_plugins }}"
+  loop_control:
+    label: "{{ item.type }}/{{ item.name }} {{ item.version }}"
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Unpack each plugin archive
+  ansible.builtin.unarchive:
+    src: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}.tar.gz"
+    dest: "{{ openbao_plugin_cache }}"
+    remote_src: true
+    include: ["{{ item.binary }}"]
+    creates: "{{ openbao_plugin_cache }}/{{ item.binary }}"
+  loop: "{{ openbao_plugins }}"
+  loop_control:
+    label: "{{ item.type }}/{{ item.name }} {{ item.version }}"
+  when: not ansible_check_mode
+
+- name: Read each unpacked binary's checksum
+  ansible.builtin.stat:
+    path: "{{ openbao_plugin_cache }}/{{ item.binary }}"
+    checksum_algorithm: sha256
+  loop: "{{ openbao_plugins }}"
+  loop_control:
+    label: "{{ item.binary }}"
+  register: openbao_plugin_binaries
+  when: not ansible_check_mode
+
+- name: Assert each binary is the expected one
+  ansible.builtin.assert:
+    that: item.stat.checksum | default('') == item.item.binary_sha256
+    fail_msg: "{{ item.item.binary }}: sha256 {{ item.stat.checksum | default('missing') }}, expected {{ item.item.binary_sha256 }}"
+    quiet: true
+  loop: "{{ openbao_plugin_binaries.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.binary }}"
+  when: not ansible_check_mode

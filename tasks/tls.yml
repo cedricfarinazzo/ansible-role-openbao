@@ -1,0 +1,49 @@
+---
+# Generated on the host: the private key never leaves it
+- name: TLS directory
+  ansible.builtin.file:
+    path: "{{ openbao_tls_dir }}"
+    state: directory
+    owner: openbao
+    group: openbao
+    mode: "0700"
+  when: openbao_tls_self_signed
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: TLS private key
+  community.crypto.openssl_privatekey:
+    path: "{{ openbao_tls_key_file }}"
+    type: ECC
+    curve: secp384r1
+    owner: openbao
+    group: openbao
+    mode: "0600"
+  when: openbao_tls_self_signed
+  notify: Restart OpenBao
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: TLS certificate request
+  community.crypto.openssl_csr_pipe:
+    privatekey_path: "{{ openbao_tls_key_file }}"
+    common_name: "{{ openbao_tls_common_name }}"
+    subject_alt_name: "{{ openbao_tls_sans }}"
+    basic_constraints: ["CA:TRUE"]
+    basic_constraints_critical: true
+    key_usage: [digitalSignature, keyCertSign]
+    extended_key_usage: [serverAuth]
+  register: openbao_tls_csr
+  changed_when: false
+  when: openbao_tls_self_signed and not ansible_check_mode
+
+- name: Self-signed TLS certificate
+  community.crypto.x509_certificate:
+    path: "{{ openbao_tls_cert_file }}"
+    csr_content: "{{ openbao_tls_csr.csr }}"
+    privatekey_path: "{{ openbao_tls_key_file }}"
+    provider: selfsigned
+    selfsigned_not_after: "+{{ openbao_tls_valid_days }}d"
+    owner: openbao
+    group: openbao
+    mode: "0644"
+  when: openbao_tls_self_signed and not ansible_check_mode
+  notify: Restart OpenBao

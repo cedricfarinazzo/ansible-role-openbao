@@ -1,0 +1,33 @@
+---
+galaxy_info:
+  role_name: openbao
+  namespace: cedricfarinazzo
+  author: Cédric Farinazzo
+  description: >-
+    OpenBao server from the official deb: KMS plugins with checksums, auto-unseal (PKCS#11, ...), self-signed TLS,
+    raft storage, secrets in a root-only environment file, and post-init engines, policies and token roles
+
+  license: MIT
+
+  min_ansible_version: "2.15"
+
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+    - name: Ubuntu
+      versions:
+        - noble
+        - resolute
+
+  galaxy_tags:
+    - openbao
+    - vault
+    - secrets
+    - pkcs11
+    - hsm
+    - unseal
+    - security
+
+dependencies: []

@@ -1,0 +1,37 @@
+---
+# Every input first, then the plugin downloads (a bad checksum stops before any install)
+- name: Validate the inputs
+  ansible.builtin.import_tasks: validate.yml
+
+- name: Download and check the plugins
+  ansible.builtin.import_tasks: plugins.yml
+
+- name: Install OpenBao
+  ansible.builtin.import_tasks: install.yml
+
+- name: TLS certificate
+  ansible.builtin.import_tasks: tls.yml
+
+- name: Configuration and environment
+  ansible.builtin.import_tasks: config.yml
+
+- name: Start OpenBao
+  ansible.builtin.systemd_service:
+    name: openbao
+    state: started
+    enabled: true
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Apply a changed configuration now
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the API (sealed or not initialized is fine here)
+  ansible.builtin.uri:
+    url: "{{ openbao_local_addr }}/v1/sys/health"
+    ca_path: "{{ openbao_tls_cert_file }}"
+    status_code: [200, 429, 472, 473, 501, 503]
+  register: openbao_health
+  retries: 30
+  delay: 2
+  until: openbao_health.status in [200, 429, 472, 473, 501, 503]
+  when: not ansible_check_mode
