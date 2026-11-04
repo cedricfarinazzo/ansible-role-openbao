@@ -1,4 +1,12 @@
 ---
+- name: Drop-in directory of the unit
+  ansible.builtin.file:
+    path: /etc/systemd/system/openbao.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Plugin directory
   ansible.builtin.file:
     path: "{{ openbao_plugin_directory }}"
@@ -10,7 +18,7 @@
 
 - name: Install each checked plugin binary
   ansible.builtin.copy:
-    src: "{{ openbao_plugin_cache }}/{{ item.binary }}"
+    src: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}/{{ item.binary }}"
     dest: "{{ openbao_plugin_directory }}/{{ item.binary }}"
     remote_src: true
     owner: root
@@ -42,6 +50,23 @@
     group: root
     mode: "0400"
   no_log: true
+  notify: Restart OpenBao
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Service restart policy
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/openbao.service.d/ansible.conf
+    content: |
+      # Managed by Ansible: every failed start retries the seal (and an HSM login)
+      [Unit]
+      StartLimitIntervalSec={{ openbao_service_start_limit_interval_sec }}
+      StartLimitBurst={{ openbao_service_start_limit_burst }}
+
+      [Service]
+      Restart={{ openbao_service_restart }}
+    owner: root
+    group: root
+    mode: "0644"
   notify: Restart OpenBao
   ignore_errors: "{{ ansible_check_mode }}"
 

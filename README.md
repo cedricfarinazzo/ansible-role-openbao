@@ -48,6 +48,7 @@ amd64 and arm64 (the OpenBao repository and the openbao-plugins releases ship bo
 | `openbao_api_addr` | (required) | Address clients use, e.g. `https://192.0.2.10:8200` |
 | `openbao_listener_address` | `0.0.0.0:8200` | TCP listener (TLS always on) |
 | `openbao_cluster_addr` | `https://127.0.0.1:8201` | Raft cluster address |
+| `openbao_cluster_listen_address` | `127.0.0.1:8201` | Where the cluster port listens (loopback for one node) |
 | `openbao_storage` | raft in `/opt/openbao/data` | One storage backend |
 | `openbao_seal` | `{}` | One seal stanza, e.g. `{pkcs11: {...}}`; `{}` keeps Shamir keys |
 | `openbao_ui` | `false` | Web UI |
@@ -56,6 +57,14 @@ amd64 and arm64 (the OpenBao repository and the openbao-plugins releases ship bo
 | `openbao_environment_required` | `[]` | Names that must be set and non-empty, or the role stops before any change |
 
 The configuration is written as JSON (valid OpenBao configuration) to `/etc/openbao/openbao.hcl` and checked with `bao operator validate-config`.
+
+### Service
+
+| Variable | Default | Meaning |
+| -------- | ------- | ------- |
+| `openbao_service_start` | `true` | `false`: install and configure only, neither started nor enabled (test an HSM PIN by hand first) |
+| `openbao_service_restart` | `on-failure` | systemd `Restart=`. Every automatic restart retries the seal and its HSM login: with a PIN retry counter (a YubiKey locks after 3 wrong PINs) use `"no"` and alert on the service |
+| `openbao_service_start_limit_interval_sec`, `openbao_service_start_limit_burst` | `60`, `3` | systemd start limits; they count manual starts too, so a low burst refuses ordinary restarts |
 
 ### TLS
 
@@ -101,13 +110,16 @@ Every task that carries the root token has `no_log`. Each item is created or upd
           checksum: 9485217db9f2797fec0c56037e64559cdef00e0a3a0c7cc34da6492f402e5d59
           binary: openbao-plugin-kms-pkcs11_linux_arm64_v8
           binary_sha256: 7654edf4f5438e0d798ef6f369526f99722c2c2cab3c83b741539e120348b213
-      # PIV slot 9d (CKA_ID 03), RSA-OAEP SHA-256
+      # PIV slot 9d: ykcs11 gives its data object, certificate and keys CKA_ID 03, so the label picks the key
       openbao_seal:
         pkcs11:
           lib: /usr/lib/aarch64-linux-gnu/libykcs11.so
           slot: "0"
           key_id: "03"
+          key_label: Private key for Key Management
           rsa_oaep_hash: sha256
+      # No automatic restart: each one would spend a PIN try
+      openbao_service_restart: "no"
       openbao_environment:
         BAO_HSM_PIN: "{{ lookup('env', 'BAO_HSM_PIN') }}"
       openbao_environment_required: [BAO_HSM_PIN]
@@ -142,7 +154,7 @@ Then `bao operator init -recovery-shares=3 -recovery-threshold=2` on the host, t
 
 ## Testing
 
-`./run-tests.sh debian13` (or `all`, in parallel). The Molecule scenario uses SoftHSM as a stand-in HSM with the real `kms-pkcs11` plugin: the role stops on an unset required variable and on a wrong plugin checksum with nothing installed; then install, init (3 recovery shares, threshold 2), post-init twice (the second changes nothing), a periodic token from the token script does transit encrypt and decrypt and nothing else, and a restart unseals again through the seal alone. SoftHSM 2.6 does RSA-OAEP with SHA-1 only, so the scenario uses `rsa_oaep_hash: sha1`.
+`./run-tests.sh debian13` (or `all`, in parallel). The Molecule scenario uses SoftHSM as a stand-in HSM with the real `kms-pkcs11` plugin: the role stops on an unset required variable and on a wrong plugin checksum with nothing installed; `openbao_service_start: false` installs without starting or enabling; then install, init (3 recovery shares, threshold 2), post-init twice (the second changes nothing), a periodic token from the token script does transit encrypt and decrypt and nothing else, and a restart unseals again through the seal alone. SoftHSM 2.6 does RSA-OAEP with SHA-1 only, so the scenario uses `rsa_oaep_hash: sha1`.
 
 ## License
 

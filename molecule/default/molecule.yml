@@ -53,7 +53,9 @@ provisioner:
           pkcs11:
             lib: "{{ molecule_hsm_lib }}"
             token_label: molecule
+            # id and label, as with a PIV token whose certificate shares the key's CKA_ID
             key_id: "03"
+            key_label: seal
             rsa_oaep_hash: sha1
         openbao_environment:
           BAO_HSM_PIN: "{{ molecule_hsm_pin }}"
@@ -61,6 +63,9 @@ provisioner:
           MOLECULE_QUOTED: 'a "b" $$c \d'
         openbao_environment_required: [BAO_HSM_PIN]
         openbao_token_script: true
+        # As for an HSM with a PIN retry counter: no automatic restart
+        openbao_service_restart: "no"
+        openbao_service_start_limit_interval_sec: 120
         openbao_secrets_engines:
           - {path: transit, type: transit, description: Auto-unseal of other OpenBao servers}
         openbao_transit_keys:

@@ -1,12 +1,12 @@
 ---
-# Generated on the host: the private key never leaves it
+# Generated on the host: the private key never leaves it (0600); the certificate is public (clients pin it)
 - name: TLS directory
   ansible.builtin.file:
     path: "{{ openbao_tls_dir }}"
     state: directory
     owner: openbao
     group: openbao
-    mode: "0700"
+    mode: "0755"
   when: openbao_tls_self_signed
   ignore_errors: "{{ ansible_check_mode }}"
 

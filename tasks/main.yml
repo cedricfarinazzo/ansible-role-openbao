@@ -20,6 +20,8 @@
     name: openbao
     state: started
     enabled: true
+    daemon_reload: true
+  when: openbao_service_start
   ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Apply a changed configuration now
@@ -34,4 +36,4 @@
   retries: 30
   delay: 2
   until: openbao_health.status in [200, 429, 472, 473, 501, 503]
-  when: not ansible_check_mode
+  when: openbao_service_start and not ansible_check_mode

@@ -77,7 +77,28 @@
             that: ansible_failed_task.name == 'Download each plugin archive, checksum checked'
 
     - name: Nothing installed by either run
-      ansible.builtin.command: dpkg-query -W -f '${Status}' openbao
+      ansible.builtin.command: dpkg-query -W -f '${db:Status-Status}' openbao
       register: molecule_dpkg
       changed_when: false
-      failed_when: "'install ok installed' in molecule_dpkg.stdout"
+      failed_when: molecule_dpkg.stdout == 'installed'
+
+# A first apply that installs and configures without starting (an HSM PIN is tested by hand first)
+- name: Install without starting
+  hosts: all
+  tasks:
+    - name: Run the role with the service left stopped
+      ansible.builtin.include_role:
+        name: ../../../../ansible-role-openbao
+      vars:
+        openbao_service_start: false
+
+    - name: Installed, configured, neither started nor enabled
+      ansible.builtin.shell: |
+        set -o pipefail
+        test "$(dpkg-query -W -f '${db:Status-Status}' openbao)" = installed
+        test -s /etc/openbao/openbao.hcl
+        ! systemctl is-active --quiet openbao
+        ! systemctl is-enabled --quiet openbao
+      args:
+        executable: /bin/bash
+      changed_when: false

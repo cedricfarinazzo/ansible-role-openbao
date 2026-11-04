@@ -37,6 +37,8 @@ openbao_listener_address: "0.0.0.0:8200"
 # Address clients use, e.g. https://192.0.2.10:8200 (required)
 openbao_api_addr: ""
 openbao_cluster_addr: "https://127.0.0.1:8201"
+# Where the raft cluster port listens (loopback for a single node)
+openbao_cluster_listen_address: "127.0.0.1:8201"
 openbao_storage:
   raft:
     path: /opt/openbao/data
@@ -51,6 +53,15 @@ openbao_config_extra: {}
 openbao_environment: {}
 # Names that must be set and non-empty in openbao_environment, or the role stops
 openbao_environment_required: []
+
+# --- Service -------------------------------------------------------------------
+# false: install and configure only, neither started nor enabled (e.g. test an HSM PIN by hand first)
+openbao_service_start: true
+# Each automatic restart retries the seal, and so the HSM login: with a PIN retry counter (a YubiKey
+# locks after 3 wrong PINs) set "no" and alert on the service instead. The limits count manual starts too.
+openbao_service_restart: on-failure
+openbao_service_start_limit_interval_sec: 60
+openbao_service_start_limit_burst: 3
 
 # --- Post-init configuration (tasks_from: configure) --------------------------
 # Defaults to the listener on this host

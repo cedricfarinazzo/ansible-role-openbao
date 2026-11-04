@@ -16,7 +16,7 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 - `files/openbao-token-create` — one token from a token role, printed once.
 - `handlers/main.yml` — restart OpenBao.
 - `meta/main.yml` — Galaxy metadata; `platforms` lists exactly what CI tests.
-- `molecule/default/` — one scenario (docker driver, `geerlingguy/docker-<distro>-ansible`): `prepare/` makes a SoftHSM token with an RSA key (CKA_ID 03) and runs the two failure paths (required env unset, wrong plugin checksum: nothing installed); `converge/`; `verify/` checks files, the environment, init 3/2, post-init twice, the periodic token, a restart unsealing through the seal; the sequence runs `check` on a fresh container before `converge`.
+- `molecule/default/` — one scenario (docker driver, `geerlingguy/docker-<distro>-ansible`): `prepare/` makes a SoftHSM token with an RSA key (CKA_ID 03, label `seal`), runs the two failure paths (required env unset, wrong plugin checksum: nothing installed), then an install with `openbao_service_start: false` (not started, not enabled); `check` and `converge` follow; `verify/` checks files, the restart policy, a non-root client, the environment, init 3/2, the cluster port on loopback, post-init twice, the periodic token, a restart unsealing through the seal.
 - `run-tests.sh` / `Makefile` — local Molecule entry points; several distros run in parallel, one log each in `.molecule-logs/`.
 - `requirements.yml` — collections the role needs at runtime (consumer ranges); `requirements-dev.txt` — controller tooling, exact pins; `molecule/default/collections.yml` — test pins.
 - `package.json`, `bun.lock`, `.releaserc.json` — semantic-release tooling only.
@@ -55,6 +55,12 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 - `bao operator validate-config` checks syntax, not semantics (an unknown storage type passes): the real check is the service starting.
 - `deb822_repository` needs `python3-debian` on the host; check mode on a fresh host fails there (`ignore_errors` in check mode).
 - Debian's `pcscd` asks polkit (`org.debian.pcsc-lite.access_pcsc`, `access_card`): a system user such as `openbao` is refused without a rule (`openbao_pcsc_access`).
+
+- A PIV token (ykcs11) gives the data object, the certificate and both keys of a slot the same CKA_ID: a seal with `key_id` alone finds the certificate first and fails on its missing `CKA_KEY_TYPE`. Give `key_label` too (the private key's label). SoftHSM has no certificate, so the scenario cannot show it.
+- systemd `StartLimitBurst` counts manual starts and restarts too: a burst of 2 refuses the third restart in the interval. Against HSM PIN lockout use `Restart=no`, not a low burst.
+- A held package reads `hold ok installed` in `${Status}`: test `${db:Status-Status}` (`installed`).
+- `molecule prepare` skips an instance it thinks prepared, even after `destroy`/`create`: `molecule prepare --force` when iterating; `run-tests.sh` (fresh state) is the proof.
+- The raft cluster port opens only once raft runs (after init): check it after `bao operator init`.
 
 ## Self Improvement Loop
 

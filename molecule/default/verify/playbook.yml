@@ -34,6 +34,22 @@
       changed_when: false
       failed_when: molecule_san.stdout != 'X509v3SubjectAlternativeName:IPAddress:127.0.0.1,DNS:localhost,DNS:openbao.example.org,IPAddress:192.0.2.10'
 
+    - name: The restart policy and its limits are applied
+      ansible.builtin.command: systemctl show openbao -p Restart -p StartLimitBurst -p StartLimitIntervalUSec
+      register: molecule_unit
+      changed_when: false
+      failed_when: molecule_unit.stdout_lines | sort != ['Restart=no', 'StartLimitBurst=3', 'StartLimitIntervalUSec=2min']
+
+    - name: A non-root user reads the CA and reaches the API with client.env
+      ansible.builtin.shell: |
+        set -o pipefail
+        # bao status exits 2 while not initialized: the JSON is the proof, not the exit code
+        out=$(runuser -u nobody -- bash -c '. /etc/openbao/client.env && bao status -format=json' 2>&1 || true)
+        grep -q '"initialized"' <<< "$out" || { echo "$out"; exit 1; }
+      args:
+        executable: /bin/bash
+      changed_when: false
+
     - name: The environment reaches the server unchanged
       ansible.builtin.shell: |
         set -o pipefail
@@ -72,6 +88,16 @@
       failed_when: >-
         (molecule_status.stdout | from_json).type != 'pkcs11'
         or (molecule_status.stdout | from_json).n != 3 or (molecule_status.stdout | from_json).t != 2
+
+    - name: The raft cluster port listens on loopback only (raft runs once initialized)
+      ansible.builtin.shell: |
+        set -o pipefail
+        ss -Hltn 'sport = :8201' | awk '{print $4}'
+      args:
+        executable: /bin/bash
+      register: molecule_cluster
+      changed_when: false
+      failed_when: molecule_cluster.stdout_lines != ['127.0.0.1:8201']
 
     - name: The post-init part refuses to run without a root token
       block:

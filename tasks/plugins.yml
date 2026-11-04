@@ -21,13 +21,24 @@
     label: "{{ item.type }}/{{ item.name }} {{ item.version }}"
   ignore_errors: "{{ ansible_check_mode }}"
 
+- name: One directory per plugin version
+  ansible.builtin.file:
+    path: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop: "{{ openbao_plugins }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.version }}"
+
 - name: Unpack each plugin archive
   ansible.builtin.unarchive:
     src: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}.tar.gz"
-    dest: "{{ openbao_plugin_cache }}"
+    dest: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}"
     remote_src: true
     include: ["{{ item.binary }}"]
-    creates: "{{ openbao_plugin_cache }}/{{ item.binary }}"
+    creates: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}/{{ item.binary }}"
   loop: "{{ openbao_plugins }}"
   loop_control:
     label: "{{ item.type }}/{{ item.name }} {{ item.version }}"
@@ -35,7 +46,7 @@
 
 - name: Read each unpacked binary's checksum
   ansible.builtin.stat:
-    path: "{{ openbao_plugin_cache }}/{{ item.binary }}"
+    path: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}/{{ item.binary }}"
     checksum_algorithm: sha256
   loop: "{{ openbao_plugins }}"
   loop_control:

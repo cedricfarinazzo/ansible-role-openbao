@@ -8,6 +8,7 @@ role=${1:?usage: openbao-token-create <token role>}
 . /etc/openbao/client.env
 
 if [ -z "${BAO_TOKEN:-}" ]; then
+  [ -t 0 ] || { echo "openbao-token-create: no BAO_TOKEN and no terminal to ask for it" >&2; exit 1; }
   printf 'Token allowed to use the role %s: ' "$role" >&2
   trap 'stty echo' EXIT INT TERM
   stty -echo

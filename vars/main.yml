@@ -25,6 +25,7 @@ openbao_config_base:
   listener:
     - tcp:
         address: "{{ openbao_listener_address }}"
+        cluster_address: "{{ openbao_cluster_listen_address }}"
         tls_cert_file: "{{ openbao_tls_cert_file }}"
         tls_key_file: "{{ openbao_tls_key_file }}"
   plugin_directory: "{{ openbao_plugin_directory }}"

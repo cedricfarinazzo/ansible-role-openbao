@@ -47,7 +47,7 @@
     body_format: json
     body: {type: "{{ item.type }}", description: "{{ item.description | default('') }}"}
     status_code: 204
-  loop: "{{ openbao_secrets_engines | rejectattr('path', 'in', openbao_mounts.json.data.keys() | map('regex_replace', '/$', '')) | list }}"
+  loop: "{{ openbao_secrets_engines | rejectattr('path', 'in', openbao_mounts.json.data.keys() | map('regex_replace', '/$', '') | list) | list }}"
   loop_control:
     label: "{{ item.path }} ({{ item.type }})"
   changed_when: true
