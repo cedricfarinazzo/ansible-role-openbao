@@ -2,11 +2,15 @@
 - name: Prepare the stand-in HSM
   hosts: all
   tasks:
-    - name: SoftHSM and the PKCS#11 tools
+    - name: Package lists (Debian family)
       ansible.builtin.apt:
-        name: [softhsm2, opensc]
         update_cache: true
         cache_valid_time: 3600
+      when: not molecule_el
+
+    - name: SoftHSM and the PKCS#11 tools
+      ansible.builtin.package:
+        name: "{{ ['softhsm', 'opensc', 'iproute'] if molecule_el else ['softhsm2', 'opensc'] }}"
 
     - name: SoftHSM token with an RSA key pair (CKA_ID 03, label seal)
       ansible.builtin.shell: |
@@ -23,7 +27,7 @@
       ansible.builtin.file:
         path: /var/lib/softhsm/tokens
         recurse: true
-        group: softhsm
+        group: "{{ molecule_hsm_group }}"
         mode: u=rwX,g=rwX,o=
 
 # AC: a bad input stops the role before anything is installed
@@ -67,10 +71,11 @@
             that: ansible_failed_task.name == 'Download each plugin archive, checksum checked'
 
     - name: Nothing installed by either run
-      ansible.builtin.command: dpkg-query -W -f '${db:Status-Status}' openbao
-      register: molecule_dpkg
+      ansible.builtin.command:
+        argv: "{{ ['rpm', '-q', 'openbao'] if molecule_el else ['dpkg-query', '-W', '-f', '${db:Status-Status}', 'openbao'] }}"
+      register: molecule_pkg
       changed_when: false
-      failed_when: molecule_dpkg.stdout == 'installed'
+      failed_when: molecule_pkg.rc == 0 and (molecule_el or molecule_pkg.stdout == 'installed')
 
 # A first apply that installs and configures without starting (an HSM PIN is tested by hand first)
 - name: Install without starting
@@ -89,8 +94,13 @@
     - name: Installed, configured, neither started nor enabled
       ansible.builtin.shell: |
         set -o pipefail
-        test "$(dpkg-query -W -f '${db:Status-Status}' openbao)" = installed
-        test "$(dpkg-query -W -f '${Version}' openbao)" = 2.7.1
+        if [ {{ molecule_el | ternary('el', 'deb') }} = deb ]; then
+          test "$(dpkg-query -W -f '${db:Status-Status}' openbao)" = installed
+          test "$(dpkg-query -W -f '${Version}' openbao)" = 2.7.1
+        else
+          test "$(rpm -q --qf '%{VERSION}' openbao)" = 2.7.1
+          dnf versionlock list openbao | grep -q '^openbao-0:2.7.1-'
+        fi
         test -s /etc/openbao/openbao.hcl
         ! systemctl is-active --quiet openbao
         ! systemctl is-enabled --quiet openbao

@@ -4,23 +4,24 @@ Orientation for Claude Code sessions in this repository. `AGENTS.md` is a symlin
 
 ## Purpose
 
-Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao server from the official deb, in two parts. `main`: install, plugins, seal, TLS, configuration, environment, service. `tasks_from: configure`: post-init engines, transit keys, policies, token roles, with a root token given at run time. Generic by design: no reference to any downstream project, host, user or network in code, defaults, docs or commit messages.
+Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao server or raft cluster from the official packages (apt repository; signed release RPM on EL), in two parts. `main`: install, plugins, seal, TLS, configuration (listener, telemetry, logs, audit devices), environment, service, snapshot timer. `tasks_from: configure`: post-init auth methods, engines, transit keys, policies, token roles, any API object (present or absent), snapshot tokens, with a root token given at run time. Generic by design: no reference to any downstream project, host, user or network in code, defaults, docs or commit messages.
 
 ## Layout
 
 - `defaults/main.yml` — every user-facing variable (`openbao_*`), with its generic default.
-- `vars/main.yml` — internal paths, the plugin stanzas, the assembled configuration (`openbao_config`, JSON), the SAN list, the local API address.
-- `tasks/main.yml` — `validate.yml` (every input), `plugins.yml` (is OpenBao installed; download with checksum, unpack per checksum, binary sha256 asserted; before any install), `install.yml` (key fingerprint checked, deb822 repository, exact version held and upgradable, extra packages, groups, polkit rule, was the service running), `tls.yml` (self-signed on the host), `config.yml` (plugin binaries, config validated by `bao operator validate-config`, env file root 0400 with `no_log`, restart drop-in, `client.env`, scripts); then, when a start is due, the PKCS#11 OAEP check (`openbao_pkcs11_oaep_check`), the start, the handlers (restart only a service that was running), the health wait and the running seal type.
-- `tasks/configure.yml` — post-init over the HTTP API (`uri`, `no_log` on every task with the token): read, then write only what differs.
+- `vars/main.yml` — internal paths, the plugin and audit stanzas, the cluster defaults (`retry_join`, cluster address), the assembled configuration (`openbao_config`, JSON), the SAN list, the local API address, the post-init object lists (`openbao_transit_objects`, snapshot policy and role) and the diff (`openbao_object_diff_keys`).
+- `tasks/main.yml` — `validate.yml` (every input, cluster membership), `plugins.yml` (installed version per family, no downgrade; download with checksum, unpack per checksum, binary sha256 asserted; before any install), `install.yml` (key fingerprint checked; `install-Debian.yml`: deb822 repository, version held; `install-RedHat.yml`: signed `checksums.txt` checked with `gpgv`, RPM sha256, `dnf versionlock`; groups, polkit rule, was the service running), `tls.yml` (self-signed on the host; a cluster's certificate bundle), `config.yml` (plugin binaries, config validated by `bao operator validate-config`, env file root 0400 with `no_log`, restart drop-in, `client.env`, scripts, audit log dir and logrotate, snapshot units); then, when a start is due, the PKCS#11 OAEP check (`openbao_pkcs11_oaep_check`), the start, the handlers (restart only a service that was running), the health wait and the running seal type.
+- `tasks/configure.yml` — post-init over the HTTP API (`uri`, `no_log` on every task with the token), once per cluster (`openbao_configure_here`); `mounts.yml` (auth methods or engines: type checked, enable, tune, disable) and `api_objects.yml` (any object: read, write only the keys that differ, delete what is absent; `create_only`, `update_only`, `read_path`); then each host's snapshot token.
 - `templates/openbao.env.j2` — systemd `EnvironmentFile`, values double-quoted.
-- `files/openbao-token-create` — one token from a token role, printed once; `files/openbao-pkcs11-oaep-check` — OAEP round trip on a PKCS#11 key with the PIN from `BAO_HSM_PIN`.
+- `files/openbao-token-create` — one token from a token role, printed once; `files/openbao-pkcs11-oaep-check` — OAEP round trip on a PKCS#11 key with the PIN from `BAO_HSM_PIN`; `files/openbao-raft-snapshot` — one snapshot with the token in `/etc/openbao/backup.token` (renewed), the newest N kept.
 - `handlers/main.yml` — daemon-reload (drop-in change), restart OpenBao (only if it was running before the run: a first start is one start).
 - `meta/main.yml` — Galaxy metadata; `platforms` lists exactly what CI tests.
-- `molecule/default/` — one scenario (docker driver, `geerlingguy/docker-<distro>-ansible`). `prepare/`: SoftHSM token with an RSA key (CKA_ID 03, label `seal`); failure paths with nothing installed (required env unset, wrong plugin checksum); 2.7.1 installed with `openbao_service_start: false`; a wrong PIN stopped by the OAEP check (`CKR_PIN_INCORRECT`), OpenBao never started. `check`. `converge/`: the role (upgrade to the default version, one start), init once (test only: output kept root-only in `/root/molecule-init.json`), post-init; `idempotence` reruns all three and must change nothing. `verify/`: one start, files, restart policy, non-root client, environment, init 3/2, cluster port on loopback, post-init refuses without a token and a mount of another type, the periodic token, a restart unsealing through the seal.
-- `run-tests.sh` / `Makefile` — local Molecule entry points; several distros run in parallel, one log each in `.molecule-logs/`.
+- `molecule/cluster/` — three raft nodes on one docker network, static seal (the same test key everywhere): certificate bundle, `retry_join`, three voters, replication, post-init once, snapshots from a standby. Debian 13 only, one distribution at a time (container names carry no distribution).
+- `molecule/default/` — one node (docker driver, `geerlingguy/docker-<distro>-ansible`), Debian and EL families. `prepare/`: SoftHSM token with an RSA key (CKA_ID 03, label `seal`); failure paths with nothing installed (required env unset, wrong plugin checksum); 2.7.1 installed with `openbao_service_start: false`; a wrong PIN stopped by the OAEP check (`CKR_PIN_INCORRECT`), OpenBao never started. `check`. `converge/`: the role (upgrade to the default version, one start), init once (test only: output kept root-only in `/root/molecule-init.json`), post-init; `idempotence` reruns all three and must change nothing. `verify/`: one start, files, restart policy, non-root client, environment, init 3/2, cluster port on loopback, post-init refuses without a token and a mount of another type, TLS 1.3 only, metrics without a token, JSON logs, file audit and logrotate, tuning and roles read back, create/change/absent of every object kind, a create-only field refused, snapshots, the periodic token, a restart unsealing through the seal.
+- `run-tests.sh` / `Makefile` — local Molecule entry points (`-s cluster` for the cluster scenario); several distros run in parallel, one log each in `.molecule-logs/<scenario>-<distro>.log`.
 - `requirements.yml` — collections the role needs at runtime (consumer ranges); `requirements-dev.txt` — controller tooling, exact pins; `molecule/default/collections.yml` — test pins.
 - `package.json`, `bun.lock`, `.releaserc.json` — semantic-release tooling only.
-- `.github/workflows/` — `ci.yml` (lint, shellcheck, Molecule matrix), `pr-title.yml`, `release.yml` (semantic-release after `ci.yml` passes on `main`).
+- `.github/workflows/` — `ci.yml` (lint, shellcheck, Molecule matrix, cluster job), `pr-title.yml`, `release.yml` (semantic-release after `ci.yml` passes on `main`).
 
 ## Conventions
 
@@ -29,6 +30,7 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 - **Tags are bare semver** (`1.2.3`). Release notes in GitHub Releases; no `CHANGELOG.md`.
 - **No ruleset or branch protection on `main`:** it blocks semantic-release. Changes go through a PR with green CI, by discipline.
 - **Variables:** every user-facing variable starts with `openbao_`, is defined in `defaults/main.yml`, asserted in `tasks/validate.yml` (or `configure.yml` for post-init) and documented in `README.md` in the same PR.
+- **Post-init items take `state: present|absent`; an item left out is left alone.** Compare only the keys given against what the API reads back; never write an object that reads back the same.
 - **Nothing installed before every check passed:** inputs, then plugin checksums, then the repository key fingerprint. Molecule's `prepare` proves the first two.
 - **Secrets never logged or stored:** the env file task and every task carrying the root token have `no_log`; the role never runs `bao operator init` (its output stays with the operator).
 - **Examples never copy a real deployment:** documentation addresses (192.0.2.0/24, 198.51.100.0/24) and made-up names.
@@ -65,6 +67,11 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 - pkcs11-tool names SHA-1 `SHA-1` as a hash but `MGF1-SHA1` as an MGF (`Unknown PKCS11 mechanism "SHA1"`); the other hashes have no dash.
 - A failure-path test must name the cause it expects (e.g. `CKR_PIN_INCORRECT`): the wrong-PIN test once passed on an unrelated script error.
 - `-e name=false` on the command line is the string `"false"`: a boolean extra var is passed as JSON, `-e '{"name": false}'`.
+- `rejectattr('state', 'equalto', 'absent')` fails with `object of type 'dict' has no attribute 'state'` when an item has no `state`: normalise the list first (`openbao_engines_norm`), or `reject('in', <the absent items>)`.
+- JSON configuration flattens an object with one key into the labels: `{"audit": [{"file": {"file": {"options": ...}}}]}` reads as three labels (`audit type must be specified`). Put `type` and `path` inside the block.
+- `join('\n')` inside a folded (`>-`) scalar writes a literal backslash-n (the cluster CA bundle then fails with `failed to parse CA certificate`): build multi-line file content in a `|` block with a `{% for %}` loop.
+- OpenBao refuses audit devices created through the API (`unsafe_allow_api_audit_creation` is off): they are `audit` stanzas in the configuration, and dropping one disables it.
+- No official RPM repository (EPEL ships its own build): EL installs the release RPM, trusting `checksums.txt` verified by `gpgv` against the fingerprint-checked key alone.
 
 ## Self Improvement Loop
 

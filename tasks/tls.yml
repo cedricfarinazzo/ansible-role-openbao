@@ -51,3 +51,29 @@
   when: openbao_tls_self_signed and not ansible_check_mode
   register: openbao_changed_tls_cert
   notify: Restart OpenBao
+
+# A cluster of self-signed nodes: each trusts every member's certificate (retry_join, clients)
+- name: Read this node's certificate
+  ansible.builtin.slurp:
+    src: "{{ openbao_tls_cert_file }}"
+  register: openbao_tls_own_cert
+  when:
+    - openbao_tls_self_signed
+    - openbao_cluster_group | length > 0
+    - not ansible_check_mode
+
+- name: Bundle of every member's certificate
+  ansible.builtin.copy:
+    dest: "{{ openbao_tls_ca_file }}"
+    # A block scalar: '\n' inside a folded one reaches the file as the two characters
+    content: |
+      {% for h in openbao_cluster_members %}
+      {{ hostvars[h].openbao_tls_own_cert.content | b64decode | trim }}
+      {% endfor %}
+    owner: openbao
+    group: openbao
+    mode: "0644"
+  when:
+    - openbao_tls_self_signed
+    - openbao_cluster_group | length > 0
+    - not ansible_check_mode

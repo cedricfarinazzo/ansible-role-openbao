@@ -1,6 +1,7 @@
 ---
 # Post-init: run after `bao operator init`, with a root token given at run time.
-# The token is never written: every task that carries it has no_log.
+# The token is never written: every task that carries it has no_log. In a cluster, the writes run on the
+# first member in the play; each host with snapshots enabled gets its own snapshot token.
 - name: Assert a root token is given at run time
   ansible.builtin.assert:
     that: openbao_root_token is string and openbao_root_token | length > 0
@@ -10,161 +11,151 @@
 - name: Assert the post-init inputs
   ansible.builtin.assert:
     that:
-      - openbao_secrets_engines | rejectattr('path', 'defined') | list | length == 0
-      - openbao_secrets_engines | rejectattr('type', 'defined') | list | length == 0
+      - openbao_mount_lists | rejectattr('path', 'defined') | list | length == 0
+      - openbao_mount_lists | rejectattr('type', 'defined') | list | length == 0
+      - openbao_mount_lists | selectattr('config', 'defined') | rejectattr('config', 'mapping') | list | length == 0
+      - openbao_mount_lists | selectattr('options', 'defined') | rejectattr('options', 'mapping') | list | length == 0
+      - >-
+        openbao_mount_lists | selectattr('options', 'defined') | map(attribute='options') | map('dict2items') | flatten
+        | map(attribute='value') | reject('string') | list | length == 0
       - openbao_transit_keys | rejectattr('mount', 'defined') | list | length == 0
       - openbao_transit_keys | rejectattr('name', 'defined') | list | length == 0
       - openbao_policies | rejectattr('name', 'defined') | list | length == 0
-      - openbao_policies | rejectattr('rules', 'defined') | list | length == 0
+      - openbao_policies | reject('in', openbao_absent_items) | rejectattr('rules', 'defined') | list | length == 0
       - openbao_token_roles | rejectattr('name', 'defined') | list | length == 0
-      - openbao_token_roles | rejectattr('allowed_policies', 'defined') | list | length == 0
-      - openbao_token_roles | selectattr('period', 'defined') | rejectattr('period', 'integer') | list | length == 0
+      - openbao_token_roles | reject('in', openbao_absent_items) | rejectattr('allowed_policies', 'defined') | list | length == 0
+      - openbao_api_resources | rejectattr('path', 'defined') | list | length == 0
+      - openbao_api_resources | reject('in', openbao_absent_items) | rejectattr('data', 'mapping') | list | length == 0
+      - >-
+        (openbao_mount_lists + openbao_transit_keys + openbao_policies + openbao_token_roles + openbao_api_resources)
+        | selectattr('state', 'defined') | rejectattr('state', 'in', ['present', 'absent']) | list | length == 0
     fail_msg: >-
-      Engines need path and type, transit keys mount and name, policies name and rules,
-      token roles name and allowed_policies (period in seconds, an integer)
+      Engines and auth methods need path and type (config and options mappings, option values strings), transit keys
+      mount and name, policies name and rules, token roles name and allowed_policies, API resources path and data
+      (a mapping); state is present or absent
     quiet: true
-
-- name: Assert OpenBao is initialized, unsealed and active
-  ansible.builtin.uri:
-    url: "{{ openbao_addr }}/v1/sys/health"
-    ca_path: "{{ openbao_tls_ca_file }}"
-    status_code: 200
-
-- name: Read the mounts
-  ansible.builtin.uri:
-    url: "{{ openbao_addr }}/v1/sys/mounts"
-    ca_path: "{{ openbao_tls_ca_file }}"
-    headers: {X-Vault-Token: "{{ openbao_root_token }}"}
-  register: openbao_mounts
-  no_log: true
-
-- name: Engines and existing mounts, paths without a trailing slash
-  ansible.builtin.set_fact:
-    openbao_engines: >-
-      {%- set out = [] -%}
-      {%- for e in openbao_secrets_engines -%}
-      {%- set _ = out.append(e | combine({'path': e.path | regex_replace('/+$', '')})) -%}
-      {%- endfor -%}
-      {{ out }}
-    openbao_mounts_existing: >-
-      {{ dict(openbao_mounts.json.data.keys() | map('regex_replace', '/+$', '') | list
-              | zip(openbao_mounts.json.data.values() | map(attribute='type') | list)) }}
-  no_log: true
-
-- name: Assert an existing mount at a wanted path has the wanted type
-  ansible.builtin.assert:
-    that: openbao_mounts_existing[item.path] == item.type
-    fail_msg: "{{ item.path }} is mounted as {{ openbao_mounts_existing[item.path] }}, not {{ item.type }}: fix the list or unmount it"
-    quiet: true
-  loop: "{{ openbao_engines | selectattr('path', 'in', openbao_mounts_existing.keys() | list) | list }}"
-  loop_control:
-    label: "{{ item.path }}"
-
-- name: Enable each missing secrets engine
-  ansible.builtin.uri:
-    url: "{{ openbao_addr }}/v1/sys/mounts/{{ item.path }}"
-    method: POST
-    ca_path: "{{ openbao_tls_ca_file }}"
-    headers: {X-Vault-Token: "{{ openbao_root_token }}"}
-    body_format: json
-    body: {type: "{{ item.type }}", description: "{{ item.description | default('') }}"}
-    status_code: 204
-  loop: "{{ openbao_engines | rejectattr('path', 'in', openbao_mounts_existing.keys() | list) | list }}"
-  loop_control:
-    label: "{{ item.path }} ({{ item.type }})"
-  changed_when: true
-  no_log: true
-
-- name: Read each transit key
-  ansible.builtin.uri:
-    url: "{{ openbao_addr }}/v1/{{ item.mount }}/keys/{{ item.name }}"
-    ca_path: "{{ openbao_tls_ca_file }}"
-    headers: {X-Vault-Token: "{{ openbao_root_token }}"}
-    status_code: [200, 404]
-  loop: "{{ openbao_transit_keys }}"
-  loop_control:
-    label: "{{ item.mount }}/{{ item.name }}"
-  register: openbao_keys_read
-  no_log: true
-
-- name: Create each missing transit key
-  ansible.builtin.uri:
-    url: "{{ openbao_addr }}/v1/{{ item.item.mount }}/keys/{{ item.item.name }}"
-    method: POST
-    ca_path: "{{ openbao_tls_ca_file }}"
-    headers: {X-Vault-Token: "{{ openbao_root_token }}"}
-    body_format: json
-    body: {type: "{{ item.item.type | default('aes256-gcm96') }}"}
-    status_code: [200, 204]
-  loop: "{{ openbao_keys_read.results | selectattr('status', 'equalto', 404) | list }}"
-  loop_control:
-    label: "{{ item.item.mount }}/{{ item.item.name }}"
-  changed_when: true
-  no_log: true
-
-- name: Read each policy
-  ansible.builtin.uri:
-    url: "{{ openbao_addr }}/v1/sys/policies/acl/{{ item.name }}"
-    ca_path: "{{ openbao_tls_ca_file }}"
-    headers: {X-Vault-Token: "{{ openbao_root_token }}"}
-    status_code: [200, 404]
-  loop: "{{ openbao_policies }}"
-  loop_control:
-    label: "{{ item.name }}"
-  register: openbao_policies_read
-  no_log: true
-
-- name: Write each missing or changed policy
-  ansible.builtin.uri:
-    url: "{{ openbao_addr }}/v1/sys/policies/acl/{{ item.item.name }}"
-    method: PUT
-    ca_path: "{{ openbao_tls_ca_file }}"
-    headers: {X-Vault-Token: "{{ openbao_root_token }}"}
-    body_format: json
-    body: {policy: "{{ item.item.rules }}"}
-    status_code: 204
-  loop: "{{ openbao_policies_read.results }}"
-  loop_control:
-    label: "{{ item.item.name }}"
-  when: item.status == 404 or item.json.data.policy != item.item.rules
-  changed_when: true
-  no_log: true
-
-- name: Read each token role
-  ansible.builtin.uri:
-    url: "{{ openbao_addr }}/v1/auth/token/roles/{{ item.name }}"
-    ca_path: "{{ openbao_tls_ca_file }}"
-    headers: {X-Vault-Token: "{{ openbao_root_token }}"}
-    status_code: [200, 404]
-  loop: "{{ openbao_token_roles }}"
-  loop_control:
-    label: "{{ item.name }}"
-  register: openbao_roles_read
-  no_log: true
-
-- name: Write each missing or changed token role
-  ansible.builtin.uri:
-    url: "{{ openbao_addr }}/v1/auth/token/roles/{{ item.item.name }}"
-    method: POST
-    ca_path: "{{ openbao_tls_ca_file }}"
-    headers: {X-Vault-Token: "{{ openbao_root_token }}"}
-    body_format: json
-    body: "{{ openbao_role_body }}"
-    status_code: 204
   vars:
-    openbao_role_body:
-      allowed_policies: "{{ item.item.allowed_policies }}"
-      token_period: "{{ item.item.period | default(0) }}"
-      orphan: "{{ item.item.orphan | default(false) }}"
-      renewable: "{{ item.item.renewable | default(true) }}"
-  loop: "{{ openbao_roles_read.results }}"
-  loop_control:
-    label: "{{ item.item.name }}"
-  when: >-
-    item.status == 404
-    or (item.json.data.allowed_policies | sort) != (item.item.allowed_policies | sort)
-    or item.json.data.token_period != (item.item.period | default(0))
-    or item.json.data.orphan != (item.item.orphan | default(false))
-    or item.json.data.renewable != (item.item.renewable | default(true))
-  changed_when: true
-  no_log: true
+    openbao_mount_lists: "{{ openbao_secrets_engines + openbao_auth_methods }}"
+    openbao_absent_items: >-
+      {{ (openbao_policies + openbao_token_roles + openbao_api_resources) | selectattr('state', 'defined')
+         | selectattr('state', 'equalto', 'absent') | list }}
+
+# The post-init play may run without the main part: publish again what the members read from each other
+- name: Publish this node's snapshot setting to the other members
+  ansible.builtin.set_fact:
+    openbao_node_backup_enabled: "{{ openbao_backup_enabled }}"
+
+- name: Configure once (the cluster's first member in the play, or each single node)
+  when: openbao_configure_here | bool
+  block:
+    - name: Assert OpenBao is initialized, unsealed and reachable (a standby forwards the writes)
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/sys/health?standbyok=true"
+        ca_path: "{{ openbao_tls_ca_file }}"
+        status_code: 200
+
+    - name: Auth methods
+      ansible.builtin.include_tasks: mounts.yml
+      vars:
+        openbao_mount_kind: auth methods
+        openbao_mount_api: auth
+        openbao_mount_items: "{{ openbao_auth_norm }}"
+
+    - name: Secrets engines
+      ansible.builtin.include_tasks: mounts.yml
+      vars:
+        openbao_mount_kind: secrets engines
+        openbao_mount_api: mounts
+        openbao_mount_items: "{{ openbao_engines_norm }}"
+
+    # A key: created with its type and create-time fields, then its config; deletion needs deletion_allowed first
+    - name: Transit keys
+      ansible.builtin.include_tasks: api_objects.yml
+      vars:
+        openbao_objects_kind: transit key
+        openbao_objects: "{{ openbao_transit_objects }}"
+
+    - name: ACL policies
+      ansible.builtin.include_tasks: api_objects.yml
+      vars:
+        openbao_objects_kind: policy
+        openbao_objects: >-
+          {%- set out = [] -%}
+          {%- for p in openbao_policies + (openbao_backup_policy if openbao_backup_wanted | bool else []) -%}
+          {%- set _ = out.append({'path': 'sys/policies/acl/' ~ p.name, 'label': p.name, 'state': p.state | default('present'),
+                                  'data': {'policy': p.rules | default('')}}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Token roles
+      ansible.builtin.include_tasks: api_objects.yml
+      vars:
+        openbao_objects_kind: token role
+        openbao_objects: >-
+          {%- set out = [] -%}
+          {%- for r in openbao_token_roles + (openbao_backup_token_role if openbao_backup_wanted | bool else []) -%}
+          {%- set _ = out.append({'path': 'auth/token/roles/' ~ r.name, 'label': r.name, 'state': r.state | default('present'),
+                                  'data': r | dict2items | rejectattr('key', 'in', ['name', 'state']) | items2dict}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Other API resources
+      ansible.builtin.include_tasks: api_objects.yml
+      vars:
+        openbao_objects_kind: API resource
+        openbao_objects: >-
+          {%- set out = [] -%}
+          {%- for r in openbao_api_resources -%}
+          {%- set _ = out.append({'path': r.path | regex_replace('^/+', ''), 'label': r.path, 'state': r.state | default('present'),
+                                  'data': r.data | default({})}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+# --- the snapshot token of this host: kept while valid, else a new one ---
+- name: Snapshot token
+  when: openbao_backup_enabled
+  block:
+    - name: Is there a snapshot token
+      ansible.builtin.stat:
+        path: "{{ openbao_backup_token_file }}"
+      register: openbao_backup_token_stat
+
+    - name: Read it
+      ansible.builtin.slurp:
+        src: "{{ openbao_backup_token_file }}"
+      register: openbao_backup_token_current
+      when: openbao_backup_token_stat.stat.exists
+      no_log: true
+
+    - name: Is it still valid
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/auth/token/lookup-self"
+        ca_path: "{{ openbao_tls_ca_file }}"
+        headers: {X-Vault-Token: "{{ openbao_backup_token_current.content | b64decode | trim }}"}
+        status_code: [200, 403]
+      register: openbao_backup_token_lookup
+      when: openbao_backup_token_stat.stat.exists
+      no_log: true
+
+    - name: Create a snapshot token
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/auth/token/create/{{ openbao_backup_token_role[0].name }}"
+        method: POST
+        ca_path: "{{ openbao_tls_ca_file }}"
+        headers: {X-Vault-Token: "{{ openbao_root_token }}"}
+        body_format: json
+        body: {display_name: "snapshot-{{ inventory_hostname }}"}
+      register: openbao_backup_token_new
+      when: not openbao_backup_token_stat.stat.exists or openbao_backup_token_lookup.status != 200
+      changed_when: true
+      no_log: true
+
+    - name: Keep it for the timer (root, 0400)
+      ansible.builtin.copy:
+        dest: "{{ openbao_backup_token_file }}"
+        content: "{{ openbao_backup_token_new.json.auth.client_token }}\n"
+        owner: root
+        group: root
+        mode: "0400"
+      when: openbao_backup_token_new is not skipped
+      no_log: true

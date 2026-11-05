@@ -1,11 +1,13 @@
 ---
 # --- Install -----------------------------------------------------------------
-# Exact OpenBao version, from the official apt repository
+# Exact OpenBao version: the official apt repository (Debian family) or the signed GitHub release (RedHat family)
 openbao_version: "2.7.2"
 openbao_apt_repo_url: https://pkgs.openbao.org/deb
-openbao_apt_key_url: https://openbao.org/assets/openbao-gpg-pub-20240618.asc
-# The downloaded key must carry this fingerprint, or nothing is installed
-openbao_apt_key_fingerprint: 66D15FDD87287219C8E15478D200CD702853E6D0
+# RedHat family: <url>/v<version>/openbao_<version>_linux_<arch>.rpm, checked against the signed checksums.txt
+openbao_release_url: https://github.com/openbao/openbao/releases/download
+openbao_gpg_key_url: https://openbao.org/assets/openbao-gpg-pub-20240618.asc
+# The downloaded key must carry this fingerprint, alone, or nothing is installed
+openbao_gpg_key_fingerprint: 66D15FDD87287219C8E15478D200CD702853E6D0
 # More packages, e.g. a PKCS#11 module and its daemon: [pcscd, ykcs11, opensc]
 openbao_packages_extra: []
 # Extra groups for the openbao user (e.g. softhsm, to read a SoftHSM token)
@@ -20,6 +22,12 @@ openbao_plugin_directory: /opt/openbao/plugins
 #   binary_sha256: the binary's sha256, rechecked by OpenBao before each start
 openbao_plugins: []
 
+# --- Cluster -----------------------------------------------------------------
+# Inventory group of the raft nodes; "" = a single node. Every member must be in the play.
+openbao_cluster_group: ""
+# retry_join entries; default: one per member, leader_api_addr its openbao_api_addr, trusting openbao_tls_ca_file
+openbao_raft_retry_join: "{{ openbao_cluster_retry_join_default }}"
+
 # --- TLS ---------------------------------------------------------------------
 # true: a self-signed certificate generated on the host (the key never leaves it)
 # false: supply openbao_tls_cert_file and openbao_tls_key_file yourself
@@ -27,20 +35,26 @@ openbao_tls_self_signed: true
 openbao_tls_dir: /opt/openbao/tls
 openbao_tls_cert_file: "{{ openbao_tls_dir }}/tls.crt"
 openbao_tls_key_file: "{{ openbao_tls_dir }}/tls.key"
-# CA that clients (and the role) trust: the certificate itself when self-signed, else your CA bundle
-openbao_tls_ca_file: "{{ openbao_tls_cert_file }}"
+# CA that clients (and the role) trust. Self-signed: the certificate itself, or in a cluster a bundle of every
+# member's certificate. Else: your CA bundle.
+openbao_tls_ca_file: "{{ openbao_tls_dir ~ '/ca-bundle.pem' if openbao_cluster_group | length > 0 else openbao_tls_cert_file }}"
 openbao_tls_common_name: "{{ ansible_facts['fqdn'] }}"
-# e.g. ["IP:192.0.2.10", "DNS:bao.example.org"]; 127.0.0.1 and localhost are always added
+# e.g. ["IP:192.0.2.10", "DNS:bao.example.org"]; 127.0.0.1, localhost and the host of openbao_api_addr are always added
 openbao_tls_subject_alt_names: []
 openbao_tls_valid_days: 3650
 
 # --- Server configuration ------------------------------------------------------
 openbao_listener_address: "0.0.0.0:8200"
+# Merged into the TCP listener, e.g. {tls_min_version: tls13, x_forwarded_for_authorized_addrs: [...],
+# telemetry: {unauthenticated_metrics_access: true}}
+openbao_listener_options: {}
+# More listener stanzas, e.g. [{unix: {address: /run/openbao/bao.sock}}]
+openbao_listeners_extra: []
 # Address clients use, e.g. https://192.0.2.10:8200 (required)
 openbao_api_addr: ""
-openbao_cluster_addr: "https://127.0.0.1:8201"
-# Where the raft cluster port listens (loopback for a single node)
-openbao_cluster_listen_address: "127.0.0.1:8201"
+# Single node: loopback. Cluster: the host of openbao_api_addr, port 8201, listening on every address.
+openbao_cluster_addr: "{{ openbao_cluster_addr_default }}"
+openbao_cluster_listen_address: "{{ '127.0.0.1:8201' if openbao_cluster_group == '' else '0.0.0.0:8201' }}"
 openbao_storage:
   raft:
     path: /opt/openbao/data
@@ -48,6 +62,19 @@ openbao_storage:
 # Seal stanza, e.g. {pkcs11: {lib: ..., slot: "0", key_id: "03"}}; {} = Shamir keys
 openbao_seal: {}
 openbao_ui: false
+# trace, debug, info, warn, error
+openbao_log_level: info
+# standard or json
+openbao_log_format: standard
+# telemetry stanza, e.g. {prometheus_retention_time: 24h, disable_hostname: true}; {} = none
+openbao_telemetry: {}
+# Each: {type, path, description?, local?, options: {...}} (option values are strings; a file device's file_path).
+# Declared in the configuration: OpenBao refuses audit devices created through the API.
+openbao_audit_devices: []
+# Rotation of the file audit logs under this directory (logrotate, then SIGHUP)
+openbao_audit_log_dir: /var/log/openbao
+openbao_audit_logrotate: true
+openbao_audit_logrotate_keep: 14
 # Merged last into the configuration (any other top-level OpenBao setting)
 openbao_config_extra: {}
 
@@ -70,18 +97,36 @@ openbao_service_start_limit_burst: 3
 # Needs pkcs11-tool (opensc) and an RSA key; reads lib, slot or token_label, key_id, rsa_oaep_hash from openbao_seal.
 openbao_pkcs11_oaep_check: false
 
+# --- Raft snapshots ----------------------------------------------------------
+# A systemd timer saving a raft snapshot; its token (periodic, snapshot read only) is created by the post-init part
+openbao_backup_enabled: false
+openbao_backup_dir: /var/backups/openbao
+# systemd OnCalendar
+openbao_backup_schedule: daily
+# Snapshots kept (the newest)
+openbao_backup_keep: 7
+# The token's period in seconds: the timer renews it at each run
+openbao_backup_token_period: 604800
+
 # --- Post-init configuration (tasks_from: configure) --------------------------
 # Defaults to the listener on this host
 openbao_addr: "{{ openbao_local_addr }}"
 # Given at run time only (-e or a vars prompt); never stored by the role
 openbao_root_token: ""
-# Each: {path, type, description?}
+# Every item below takes state: present (default) or absent. Durations are read back in seconds:
+# give them in seconds, or every run reports a change.
+# Each: {path, type, description?, config?: {default_lease_ttl, max_lease_ttl, ...}, options?: {version: "2"}}
 openbao_secrets_engines: []
-# Each: {mount, name, type?} (transit keys; type defaults to aes256-gcm96)
+# Each: {path, type, description?, config?: {...}} (config: the mount tuning, as for engines)
+openbao_auth_methods: []
+# Each: {mount, name, type?, exportable?, auto_rotate_period?, deletion_allowed?, ...} (type defaults to aes256-gcm96)
 openbao_transit_keys: []
 # Each: {name, rules} (rules: the policy in HCL)
 openbao_policies: []
-# Each: {name, allowed_policies: [...], period?, orphan?, renewable?}
+# Each: {name, allowed_policies, ...any token role parameter: token_period, orphan, token_ttl, token_bound_cidrs, ...}
 openbao_token_roles: []
+# Any other API object, e.g. {path: auth/approle/role/app, data: {token_policies: [app], token_ttl: 3600}}.
+# Only the keys given are compared; one the API never reads back (a password) is written on creation only.
+openbao_api_resources: []
 # Install openbao-token-create (a periodic or role token, printed once to stdout)
 openbao_token_script: false

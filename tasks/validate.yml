@@ -3,14 +3,16 @@
   ansible.builtin.assert:
     that:
       - openbao_version is string and openbao_version is match('^[0-9]+\.[0-9]+\.[0-9]+$')
-      - openbao_apt_key_fingerprint is string and openbao_apt_key_fingerprint is match('^[0-9A-F]{40}$')
+      - ansible_facts['os_family'] in ['Debian', 'RedHat']
+      - openbao_gpg_key_fingerprint is string and openbao_gpg_key_fingerprint is match('^[0-9A-F]{40}$')
       - openbao_apt_repo_url is match('^https://')
-      - openbao_apt_key_url is match('^https://')
+      - openbao_release_url is match('^https://')
+      - openbao_gpg_key_url is match('^https://')
       - openbao_packages_extra is sequence and openbao_packages_extra is not string
       - openbao_user_groups is sequence and openbao_user_groups is not string
       - openbao_pcsc_access is boolean
     fail_msg: >-
-      openbao_version is an exact x.y.z, openbao_apt_key_fingerprint 40 upper-case hex, the URLs https,
+      The Debian or RedHat family only; openbao_version is an exact x.y.z, openbao_gpg_key_fingerprint 40 upper-case hex, the URLs https,
       openbao_packages_extra and openbao_user_groups lists, openbao_pcsc_access a boolean
     quiet: true
 
@@ -35,6 +37,12 @@
       - openbao_addr is string and openbao_addr is match('^https://[A-Za-z0-9.:\[\]-]+:[0-9]+$')
       - openbao_token_script is boolean
       - openbao_cluster_listen_address is match('^[A-Za-z0-9.\[\]:-]*:[0-9]+$')
+      - openbao_listener_options is mapping
+      - openbao_listeners_extra is sequence and openbao_listeners_extra is not string
+      - openbao_listeners_extra | reject('mapping') | list | length == 0
+      - openbao_log_level in ['trace', 'debug', 'info', 'warn', 'error']
+      - openbao_log_format in ['standard', 'json']
+      - openbao_telemetry is mapping
       - openbao_service_start is boolean
       - openbao_service_restart in ['no', 'on-success', 'on-failure', 'on-abnormal', 'on-watchdog', 'on-abort', 'always']
       - openbao_service_start_limit_interval_sec is integer and openbao_service_start_limit_interval_sec >= 0
@@ -44,7 +52,69 @@
       backend, openbao_seal at most one seal, SANs IP:... or DNS:..., openbao_tls_valid_days a positive integer,
       openbao_service_start a boolean, openbao_service_restart a systemd Restart= value, the start limits integers,
       the TLS and plugin paths absolute, openbao_tls_common_name set, openbao_addr https://host:port,
-      openbao_token_script a boolean
+      openbao_token_script a boolean, openbao_listener_options a mapping, openbao_listeners_extra a list of
+      mappings, openbao_log_level trace/debug/info/warn/error, openbao_log_format standard/json, openbao_telemetry a mapping
+    quiet: true
+
+# Role defaults and parameters are not in other hosts' hostvars: publish what the members read from each other
+- name: Publish this node's address and snapshot setting to the other members
+  ansible.builtin.set_fact:
+    openbao_node_api_addr: "{{ openbao_api_addr }}"
+    openbao_node_backup_enabled: "{{ openbao_backup_enabled }}"
+
+- name: Assert the cluster inputs
+  ansible.builtin.assert:
+    that:
+      - openbao_cluster_group is string
+      - openbao_raft_retry_join is sequence and openbao_raft_retry_join is not string
+      - openbao_cluster_group == '' or openbao_cluster_group in groups
+      - openbao_cluster_group == '' or inventory_hostname in openbao_cluster_members
+      - openbao_cluster_group == '' or openbao_cluster_members | reject('in', ansible_play_hosts_all) | list | length == 0
+      - openbao_cluster_group == '' or openbao_storage.raft is defined
+      - openbao_cluster_group == '' or openbao_cluster_addr is not search('//(127\\.|localhost|\\[::1\\])')
+      - openbao_cluster_group == '' or openbao_cluster_listen_address is not match('^(127\\.|localhost|\\[::1\\])')
+      - >-
+        openbao_cluster_group == '' or openbao_cluster_members | map('extract', hostvars, 'openbao_node_api_addr')
+        | unique | list | length == openbao_cluster_members | length
+    fail_msg: >-
+      openbao_cluster_group names an inventory group holding this host, with every member in the play (the
+      certificate bundle and retry_join read them all); a cluster needs raft storage, a cluster address and
+      listener off loopback, and one openbao_api_addr per member
+    quiet: true
+
+- name: Assert the audit devices
+  ansible.builtin.assert:
+    that:
+      - item is mapping
+      - item.type | default('') in ['file', 'syslog', 'socket', 'http']
+      - item.path | default('') is match('^[A-Za-z0-9_.-]+/?$')
+      - item.options | default({}) is mapping
+      - item.options | default({}) | dict2items | map(attribute='value') | reject('string') | list | length == 0
+      - item.type != 'file' or item.options.file_path is defined
+    fail_msg: >-
+      Each audit device needs type (file, syslog, socket, http), path, and options with string values
+      (file: file_path, e.g. {{ openbao_audit_log_dir }}/audit.log, or stdout)
+    quiet: true
+  loop: "{{ openbao_audit_devices }}"
+  loop_control:
+    label: "{{ item.type | default('?') }}/{{ item.path | default('?') }}"
+
+- name: Assert the audit paths and the snapshots
+  ansible.builtin.assert:
+    that:
+      - openbao_audit_devices | map(attribute='path') | unique | list | length == openbao_audit_devices | length
+      - openbao_file_audit_paths | reject('match', '^' ~ (openbao_audit_log_dir | regex_escape) ~ '/[^/]+$') | list | length == 0
+      - openbao_audit_logrotate is boolean
+      - openbao_audit_logrotate_keep is integer and openbao_audit_logrotate_keep > 0
+      - openbao_backup_enabled is boolean
+      - openbao_backup_dir is match('^/[^ ]*$')
+      - openbao_backup_schedule is string and openbao_backup_schedule | length > 0
+      - openbao_backup_keep is integer and openbao_backup_keep > 0
+      - openbao_backup_token_period is integer and openbao_backup_token_period >= 3600
+      - not openbao_backup_enabled or openbao_storage.raft is defined
+    fail_msg: >-
+      Audit paths unique; a file device writes directly under {{ openbao_audit_log_dir }} (the unit lets OpenBao
+      write there); the keep counts positive integers; snapshots need raft storage and a token period of 3600 s or more
     quiet: true
 
 - name: Assert the OAEP check can be built from the seal

@@ -1,17 +1,29 @@
 ---
 # Before any install: a wrong checksum stops the run with nothing installed
-- name: Is OpenBao already installed (check mode tolerates only what a fresh host lacks)
-  ansible.builtin.command: dpkg-query -W -f '${db:Status-Status}' openbao
-  register: openbao_dpkg
+- name: Is OpenBao already installed, at which version (check mode tolerates only what a fresh host lacks)
+  ansible.builtin.command:
+    argv: "{{ openbao_query[ansible_facts['os_family']] }}"
+  vars:
+    openbao_query:
+      Debian: [dpkg-query, -W, -f, '${db:Status-Status} ${Version}', openbao]
+      RedHat: [rpm, -q, --qf, 'installed %{VERSION}', openbao]
+  register: openbao_pkg_query
   changed_when: false
   failed_when: false
   check_mode: false
 
 - name: Remember it
   ansible.builtin.set_fact:
-    openbao_present: "{{ openbao_dpkg.stdout == 'installed' }}"
+    openbao_present: "{{ openbao_pkg_query.stdout is match('^installed ') }}"
+    openbao_installed_version: "{{ openbao_pkg_query.stdout.split(' ')[1] if openbao_pkg_query.stdout is match('^installed ') else '' }}"
     # Check mode on a host without OpenBao: skip what needs the package, its user or its directories
-    openbao_fresh_check: "{{ ansible_check_mode and openbao_dpkg.stdout != 'installed' }}"
+    openbao_fresh_check: "{{ ansible_check_mode and openbao_pkg_query.stdout is not match('^installed ') }}"
+
+- name: Assert no downgrade (restore a snapshot taken under the older version instead)
+  ansible.builtin.assert:
+    that: not openbao_present or openbao_installed_version is version(openbao_version, '<=')
+    fail_msg: "OpenBao {{ openbao_installed_version }} is installed: the role never downgrades to {{ openbao_version }}"
+    quiet: true
 
 - name: Download cache (plugins, repository key)
   ansible.builtin.file:

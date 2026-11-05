@@ -25,7 +25,9 @@ provisioner:
       all:
         ansible_become: false
         # SoftHSM stands in for the HSM: a token "molecule", an RSA key with CKA_ID 03 (prepare)
-        molecule_hsm_lib: /usr/lib/softhsm/libsofthsm2.so
+        molecule_el: "{{ ansible_facts['os_family'] == 'RedHat' }}"
+        molecule_hsm_lib: "{{ '/usr/lib64/pkcs11/libsofthsm2.so' if molecule_el else '/usr/lib/softhsm/libsofthsm2.so' }}"
+        molecule_hsm_group: "{{ 'ods' if molecule_el else 'softhsm' }}"
         molecule_hsm_pin: "2222"
         molecule_plugin_arch: "{{ {'x86_64': 'amd64_v1', 'aarch64': 'arm64_v8'}[ansible_facts['architecture']] }}"
         molecule_plugin_sums:
@@ -38,7 +40,7 @@ provisioner:
         openbao_api_addr: https://127.0.0.1:8200
         openbao_listener_address: 127.0.0.1:8200
         openbao_tls_subject_alt_names: ["DNS:openbao.example.org", "IP:192.0.2.10"]
-        openbao_user_groups: [softhsm]
+        openbao_user_groups: ["{{ molecule_hsm_group }}"]
         openbao_plugins:
           - type: kms
             name: pkcs11
@@ -68,19 +70,35 @@ provisioner:
         # As for an HSM with a PIN retry counter: no automatic restart
         openbao_service_restart: "no"
         openbao_service_start_limit_interval_sec: 120
+        openbao_log_format: json
+        openbao_listener_options:
+          tls_min_version: tls13
+          telemetry: {unauthenticated_metrics_access: true}
+        openbao_telemetry: {disable_hostname: true, prometheus_retention_time: 1h}
+        openbao_audit_devices:
+          - {type: file, path: file, options: {file_path: /var/log/openbao/audit.log}}
+        openbao_backup_enabled: true
+        openbao_backup_keep: 2
         openbao_secrets_engines:
           - {path: transit, type: transit, description: Auto-unseal of other OpenBao servers}
           # A trailing slash names the same mount: the second post-init run must not create it again
-          - {path: kv/, type: kv}
+          - {path: kv/, type: kv, options: {version: "2"}, config: {max_lease_ttl: 7200}}
+        openbao_auth_methods:
+          - {path: approle, type: approle, config: {default_lease_ttl: 3600}}
         openbao_transit_keys:
           - {mount: transit, name: autounseal}
+          - {mount: transit, name: rotating, auto_rotate_period: 2592000}
         openbao_policies:
           - name: autounseal
             rules: |
               path "transit/encrypt/autounseal" { capabilities = ["update"] }
               path "transit/decrypt/autounseal" { capabilities = ["update"] }
         openbao_token_roles:
-          - {name: autounseal, allowed_policies: [autounseal], period: 86400, orphan: true}
+          - {name: autounseal, allowed_policies: [autounseal], token_period: 86400, orphan: true}
+          - {name: short, allowed_policies: [autounseal], token_ttl: 600, token_bound_cidrs: [127.0.0.1/32]}
+        openbao_api_resources:
+          - path: auth/approle/role/app
+            data: {token_policies: [autounseal], token_ttl: 1800, secret_id_ttl: 0}
 verifier:
   name: ansible
 scenario:

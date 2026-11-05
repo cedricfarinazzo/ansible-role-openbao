@@ -1,0 +1,24 @@
+#!/bin/sh
+# Saves one raft snapshot into <dir>, keeps the newest <keep>. Token: /etc/openbao/backup.token (periodic,
+# snapshot read only, written by the post-init part), renewed at each run.
+# Usage: openbao-raft-snapshot <dir> <keep>
+set -eu
+
+dir=${1:?usage: openbao-raft-snapshot <dir> <keep>}
+keep=${2:?usage: openbao-raft-snapshot <dir> <keep>}
+token_file=/etc/openbao/backup.token
+# shellcheck source=/dev/null
+. /etc/openbao/client.env
+
+[ -s "$token_file" ] || { echo "openbao-raft-snapshot: no token in $token_file (run the post-init part)" >&2; exit 1; }
+BAO_TOKEN=$(cat "$token_file")
+export BAO_TOKEN
+bao token renew > /dev/null
+
+umask 077
+snap="$dir/openbao-$(date -u +%Y%m%dT%H%M%SZ).snap"
+bao operator raft snapshot save "$snap.part"
+mv "$snap.part" "$snap"
+# Names sort by time: drop all but the newest <keep>
+find "$dir" -maxdepth 1 -name 'openbao-*.snap' | sort -r | tail -n +"$((keep + 1))" | xargs -r rm -f --
+echo "openbao-raft-snapshot: $snap"

@@ -1,0 +1,67 @@
+---
+# Three raft nodes on one network, auto-unsealed by a static seal (the same key on each), joined by retry_join
+dependency:
+  name: galaxy
+driver:
+  name: docker
+platforms:
+  - &node
+    name: openbao-node1
+    hostname: openbao-node1
+    image: "geerlingguy/docker-${MOLECULE_DISTRO:-debian13}-ansible:latest"
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+    groups: [openbao_cluster]
+    networks:
+      - name: openbao-cluster-${MOLECULE_DISTRO:-debian13}
+  - <<: *node
+    name: openbao-node2
+    hostname: openbao-node2
+  - <<: *node
+    name: openbao-node3
+    hostname: openbao-node3
+provisioner:
+  name: ansible
+  playbooks:
+    converge: converge/playbook.yml
+    verify: verify/playbook.yml
+  inventory:
+    group_vars:
+      all:
+        ansible_become: false
+        openbao_cluster_group: openbao_cluster
+        openbao_api_addr: "https://{{ inventory_hostname }}:8200"
+        # Test only: a fixed 32-byte key, the same on every node
+        openbao_seal:
+          static:
+            current_key_id: molecule-1
+            current_key: env://BAO_STATIC_KEY
+        openbao_environment:
+          BAO_STATIC_KEY: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+        openbao_secrets_engines:
+          - {path: kv, type: kv, options: {version: "2"}}
+        openbao_policies:
+          - name: kv-read
+            rules: |
+              path "kv/data/*" { capabilities = ["read"] }
+    host_vars:
+      # A standby: its snapshots go through the active node, its token is its own
+      openbao-node2:
+        openbao_backup_enabled: true
+        openbao_backup_keep: 2
+verifier:
+  name: ansible
+scenario:
+  name: cluster
+  test_sequence:
+    - dependency
+    - destroy
+    - create
+    - converge
+    - verify
+    - idempotence
+    - destroy

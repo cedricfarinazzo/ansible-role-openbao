@@ -24,5 +24,6 @@ openssl pkeyutl -encrypt -pubin -inkey pub.pem -in plain -out enc \
   -pkeyopt rsa_padding_mode:oaep -pkeyopt "rsa_oaep_md:$hash" -pkeyopt "rsa_mgf1_md:$hash"
 pkcs11-tool --module "$module" "${sel[@]}" --login --pin env:BAO_HSM_PIN --decrypt --id "$id" \
   --mechanism RSA-PKCS-OAEP --hash-algorithm "$hash_name" --mgf "MGF1-$H" -i enc -o dec
-cmp -s plain dec || { echo "OAEP $hash: the token's decryption differs" >&2; exit 1; }
+# sha256sum, not cmp: coreutils is on every host, diffutils is not (minimal EL)
+[ "$(sha256sum < plain)" = "$(sha256sum < dec)" ] || { echo "OAEP $hash: the token's decryption differs" >&2; exit 1; }
 echo "OAEP $hash: pass"

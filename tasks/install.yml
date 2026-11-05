@@ -1,33 +1,32 @@
 ---
-- name: Tools for the key check, the repository and the certificate
+- name: Package lists (Debian family)
   ansible.builtin.apt:
-    name: [gnupg, ca-certificates, python3-debian, python3-cryptography]
-    state: present
     update_cache: true
     cache_valid_time: 3600
+  when: ansible_facts['os_family'] == 'Debian'
 
-- name: Keyring directory
-  ansible.builtin.file:
-    path: "{{ openbao_apt_keyring | dirname }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
+- name: Tools for the key check, the package and the certificate
+  ansible.builtin.package:
+    name: "{{ openbao_install_tools[ansible_facts['os_family']] }}"
+    state: present
+  vars:
+    openbao_install_tools:
+      Debian: [gnupg, ca-certificates, python3-debian, python3-cryptography]
+      RedHat: [gnupg2, ca-certificates, python3-cryptography, python3-dnf-plugin-versionlock]
 
-- name: Download the repository key
+- name: Download the OpenBao signing key
   ansible.builtin.get_url:
-    url: "{{ openbao_apt_key_url }}"
-    dest: "{{ openbao_plugin_cache }}/openbao-apt-key-{{ openbao_apt_key_fingerprint }}.asc"
+    url: "{{ openbao_gpg_key_url }}"
+    dest: "{{ openbao_gpg_key_cached }}"
     owner: root
     group: root
     mode: "0644"
-  register: openbao_apt_key_download
   when: not openbao_fresh_check
 
 - name: Read the key's fingerprint
   ansible.builtin.command:
-    argv: [gpg, --show-keys, --with-colons, "{{ openbao_plugin_cache }}/openbao-apt-key-{{ openbao_apt_key_fingerprint }}.asc"]
-  register: openbao_apt_key_show
+    argv: [gpg, --show-keys, --with-colons, "{{ openbao_gpg_key_cached }}"]
+  register: openbao_gpg_key_show
   changed_when: false
   check_mode: false
   when: not openbao_fresh_check
@@ -36,48 +35,14 @@
   ansible.builtin.assert:
     # One primary key only; gpg prints its fingerprint on the first fpr line, right after pub
     that:
-      - openbao_apt_key_show.stdout_lines | select('match', '^pub:') | list | length == 1
-      - (openbao_apt_key_show.stdout_lines | select('match', '^fpr:') | first) == 'fpr:::::::::' ~ openbao_apt_key_fingerprint ~ ':'
-    fail_msg: "The key at {{ openbao_apt_key_url }} is not {{ openbao_apt_key_fingerprint }} alone: nothing installed"
+      - openbao_gpg_key_show.stdout_lines | select('match', '^pub:') | list | length == 1
+      - (openbao_gpg_key_show.stdout_lines | select('match', '^fpr:') | first) == 'fpr:::::::::' ~ openbao_gpg_key_fingerprint ~ ':'
+    fail_msg: "The key at {{ openbao_gpg_key_url }} is not {{ openbao_gpg_key_fingerprint }} alone: nothing installed"
     quiet: true
-  when: not ansible_check_mode
-
-- name: Install the checked key for apt
-  ansible.builtin.copy:
-    src: "{{ openbao_plugin_cache }}/openbao-apt-key-{{ openbao_apt_key_fingerprint }}.asc"
-    dest: "{{ openbao_apt_keyring }}"
-    remote_src: true
-    owner: root
-    group: root
-    mode: "0644"
   when: not openbao_fresh_check
 
-- name: OpenBao apt repository
-  ansible.builtin.deb822_repository:
-    name: openbao
-    types: [deb]
-    uris: ["{{ openbao_apt_repo_url }}"]
-    suites: [stable]
-    components: [main]
-    signed_by: "{{ openbao_apt_keyring }}"
-  register: openbao_apt_repo
-  when: not openbao_fresh_check
-
-- name: Install the extra packages and OpenBao {{ openbao_version }}
-  ansible.builtin.apt:
-    name: "{{ ['openbao=' ~ openbao_version] + openbao_packages_extra + (['polkitd'] if openbao_pcsc_access else []) }}"
-    state: present
-    update_cache: "{{ openbao_apt_repo is changed }}"
-    # The package is held: a new openbao_version is the upgrade
-    allow_change_held_packages: true
-    allow_downgrade: false
-  when: not openbao_fresh_check
-
-- name: Hold the OpenBao version (an upgrade is a change of openbao_version)
-  ansible.builtin.dpkg_selections:
-    name: openbao
-    selection: hold
-  when: not openbao_fresh_check
+- name: Install the package for the family {{ ansible_facts['os_family'] }}
+  ansible.builtin.include_tasks: install-{{ ansible_facts['os_family'] }}.yml
 
 - name: Extra groups for the openbao user
   ansible.builtin.user:
