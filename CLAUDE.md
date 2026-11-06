@@ -21,7 +21,7 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 - `run-tests.sh` / `Makefile` — local Molecule entry points (`-s cluster` for the cluster scenario); several distros run in parallel, one log each in `.molecule-logs/<scenario>-<distro>.log`.
 - `requirements.yml` — collections the role needs at runtime (consumer ranges); `requirements-dev.txt` — controller tooling, exact pins; `molecule/default/collections.yml` — test pins.
 - `package.json`, `bun.lock`, `.releaserc.json` — semantic-release tooling only.
-- `.github/workflows/` — `ci.yml` (lint, shellcheck, Molecule matrix, cluster job; also started by `plugin-sums`), `pr-title.yml`, `release.yml` (semantic-release after `ci.yml` passes on `main`), `plugin-sums.yml` (a pull request changing `molecule/default/molecule.yml`: `.github/scripts/plugin-sums.sh` recomputes the kms-pkcs11 archive and binary sums of `molecule_plugin_version`, each archive checked against the release's checksums file; a change is committed to the pull request, then `ci.yml` is started on it, since a push with `GITHUB_TOKEN` starts no workflow).
+- `.github/workflows/` — `ci.yml` (lint, shellcheck, Molecule matrix, cluster job; also started by `plugin-sums`), `pr-title.yml`, `release.yml` (semantic-release after `ci.yml` passes on `main`), `plugin-sums.yml` (`pull_request_target`, Renovate's own `renovate/` branches only, a change to `molecule/default/molecule.yml`: the workflow and `.github/scripts/plugin-sums.sh` always come from `main`, the pull request's branch is checked out as data without credentials; the script recomputes the kms-pkcs11 archive and binary sums of `molecule_plugin_version`, each archive checked against the release's checksums file; a change is committed to the pull request, then `ci.yml` is started on it, since a push with `GITHUB_TOKEN` starts no workflow).
 
 ## Conventions
 
@@ -67,6 +67,7 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 
 - pkcs11-tool names SHA-1 `SHA-1` as a hash but `MGF1-SHA1` as an MGF (`Unknown PKCS11 mechanism "SHA1"`); the other hashes have no dash.
 - A failure-path test must name the cause it expects (e.g. `CKR_PIN_INCORRECT`): the wrong-PIN test once passed on an unrelated script error.
+- A workflow holding a write token never runs a pull request's code: `pull_request_target` (the file comes from `main`), the branch checked out as data with `persist-credentials: false`, its values through `env`, never `${{ }}` in `run`.
 - `-e name=false` on the command line is the string `"false"`: a boolean extra var is passed as JSON, `-e '{"name": false}'`.
 - `rejectattr('state', 'equalto', 'absent')` fails with `object of type 'dict' has no attribute 'state'` when an item has no `state`: normalise the list first (`openbao_engines_norm`), or `reject('in', <the absent items>)`.
 - JSON configuration flattens an object with one key into the labels: `{"audit": [{"file": {"file": {"options": ...}}}]}` reads as three labels (`audit type must be specified`). Put `type` and `path` inside the block.

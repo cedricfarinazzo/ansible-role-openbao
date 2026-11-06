@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Rewrites the kms-pkcs11 sums of the Molecule scenario for its molecule_plugin_version: each archive is
 # checked against the release's checksums file, then the archive and the unpacked binary are hashed.
+# Reads the file as data only (plugin-sums.yml passes a pull request's copy); prints one line per architecture.
+# Usage: plugin-sums.sh [molecule.yml]
 set -euo pipefail
 
-f=molecule/default/molecule.yml
+f=${1:-molecule/default/molecule.yml}
 ver=$(sed -n 's/^ *molecule_plugin_version: *//p' "$f")
 [[ $ver =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "molecule_plugin_version not found in $f" >&2; exit 1; }
 base="https://github.com/openbao/openbao-plugins/releases/download/kms-pkcs11-$ver"
@@ -30,5 +32,5 @@ if n != 1:
     sys.exit(f"{arch}: no archive/binary block in {f}")
 open(f, "w").write(s)
 EOF
-  echo "$ver $arch: archive $archive, binary $binary"
+  printf -- "- %s\n  archive %s\n  binary  %s\n" "$arch" "$archive" "$binary"
 done
