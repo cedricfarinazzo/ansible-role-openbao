@@ -35,6 +35,7 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 - **Secrets never logged or stored:** the env file task and every task carrying the root token have `no_log`; the role never runs `bao operator init` (its output stays with the operator).
 - **Examples never copy a real deployment:** documentation addresses (192.0.2.0/24, 198.51.100.0/24) and made-up names.
 - **GitHub Actions pinned by full commit SHA**, tag in a trailing comment. **Exact pins for tooling**; ranges only in `requirements.yml`.
+- **A pinned upstream version in `defaults/`, `vars/` or `molecule/`** (an OpenBao, plugin or tool release the role installs or tests) carries a `# renovate: datasource=<datasource> depName=<name> [extractVersion=<regex>]` line right above it, or Renovate never sees it. Its bump is `fix(deps)` in `defaults/`/`vars/` (a patch release), `chore(deps)` in `molecule/` (no release, not automerged). A checksum pinned next to a version is updated by hand. `renovate.json` is identical in the ssh, power and openbao roles: change all three together.
 - **License:** MIT.
 
 ## Supported platforms
