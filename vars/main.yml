@@ -148,11 +148,11 @@ openbao_transit_objects: >-
                           'data': {'deletion_allowed': true}, 'update_only': true}) -%}
   {%- set _ = out.append({'path': key, 'label': key, 'state': 'absent'}) -%}
   {%- else -%}
-  {%- set create = {'type': k.type | default('aes256-gcm96')} -%}
-  {%- for f in openbao_transit_create_fields if f in k -%}{%- set create = create | combine({f: k[f]}) -%}{%- endfor -%}
+  {#- A filter, not a loop: a set inside a for loop does not outlive the loop -#}
+  {%- set create = {'type': k.type | default('aes256-gcm96')}
+                   | combine(k | dict2items | selectattr('key', 'in', openbao_transit_create_fields) | items2dict) -%}
   {%- set _ = out.append({'path': key, 'label': key, 'create_only': true, 'data': create}) -%}
-  {%- set config = {} -%}
-  {%- for f in openbao_transit_config_fields if f in k -%}{%- set config = config | combine({f: k[f]}) -%}{%- endfor -%}
+  {%- set config = k | dict2items | selectattr('key', 'in', openbao_transit_config_fields) | items2dict -%}
   {%- if config | length > 0 -%}
   {%- set _ = out.append({'path': key ~ '/config', 'read_path': key, 'label': key ~ ' (config)', 'data': config}) -%}
   {%- endif -%}

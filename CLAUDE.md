@@ -70,6 +70,7 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 - `rejectattr('state', 'equalto', 'absent')` fails with `object of type 'dict' has no attribute 'state'` when an item has no `state`: normalise the list first (`openbao_engines_norm`), or `reject('in', <the absent items>)`.
 - JSON configuration flattens an object with one key into the labels: `{"audit": [{"file": {"file": {"options": ...}}}]}` reads as three labels (`audit type must be specified`). Put `type` and `path` inside the block.
 - `join('\n')` inside a folded (`>-`) scalar writes a literal backslash-n (the cluster CA bundle then fails with `failed to parse CA certificate`): build multi-line file content in a `|` block with a `{% for %}` loop.
+- Jinja: `{% set x = x | combine(...) %}` inside a `{% for %}` is lost when the loop ends (transit config fields were dropped, no error). Build the dict with a filter (`dict2items | selectattr | items2dict`); mutate a list with `.append` only.
 - OpenBao refuses audit devices created through the API (`unsafe_allow_api_audit_creation` is off): they are `audit` stanzas in the configuration, and dropping one disables it.
 - No official RPM repository (EPEL ships its own build): EL installs the release RPM, trusting `checksums.txt` verified by `gpgv` against the fingerprint-checked key alone.
 
