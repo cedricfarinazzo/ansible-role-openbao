@@ -1,0 +1,40 @@
+name: plugin-sums
+
+# A kms-pkcs11 version bump in the Molecule scenario (Renovate) comes without its sums: compute them,
+# commit them to the pull request, then start CI on that commit.
+on:
+  pull_request:
+    paths: [molecule/default/molecule.yml]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: plugin-sums-${{ github.head_ref }}
+
+jobs:
+  sums:
+    # A fork's branch cannot be pushed to
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Sums for molecule_plugin_version
+        run: .github/scripts/plugin-sums.sh
+
+      - name: Commit changed sums, start CI on the new head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          if git diff --quiet; then echo "sums up to date"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "test: kms-pkcs11 sums for $(sed -n 's/^ *molecule_plugin_version: *//p' molecule/default/molecule.yml)"
+          git push
+          # A push with GITHUB_TOKEN starts no workflow: start CI on the new head
+          gh workflow run ci.yml --ref "$BRANCH"

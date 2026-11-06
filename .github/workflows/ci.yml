@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Started by plugin-sums after it commits to a pull request
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -22,7 +24,7 @@ jobs:
       - run: ansible-galaxy collection install -r requirements.yml
       - run: yamllint .
       - run: ansible-lint
-      - run: shellcheck files/* run-tests.sh
+      - run: shellcheck files/* run-tests.sh .github/scripts/*.sh
 
   molecule:
     runs-on: ubuntu-26.04
