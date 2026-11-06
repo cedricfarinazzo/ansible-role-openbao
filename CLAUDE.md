@@ -21,7 +21,7 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 - `run-tests.sh` / `Makefile` — local Molecule entry points (`-s cluster` for the cluster scenario); several distros run in parallel, one log each in `.molecule-logs/<scenario>-<distro>.log`.
 - `requirements.yml` — collections the role needs at runtime (consumer ranges); `requirements-dev.txt` — controller tooling, exact pins; `molecule/default/collections.yml` — test pins.
 - `package.json`, `bun.lock`, `.releaserc.json` — semantic-release tooling only.
-- `.github/workflows/` — `ci.yml` (lint, shellcheck, Molecule matrix, cluster job), `pr-title.yml`, `release.yml` (semantic-release after `ci.yml` passes on `main`), `plugin-sums.yml` (`pull_request_target`, Renovate's own `renovate/` branches only, a change to `molecule/default/molecule.yml`: the workflow and `.github/scripts/plugin-sums.sh` always come from `main`, the pull request's branch is checked out as data without credentials; the script recomputes the kms-pkcs11 archive and binary sums of `molecule_plugin_version`, each archive checked against the release's checksums file; a change is committed to the pull request; that push's `pull_request` runs wait for a maintainer's approval, as for any `GITHUB_TOKEN` push to a pull request).
+- `.github/workflows/` — `ci.yml` (lint, shellcheck, Molecule matrix, cluster job), `pr-title.yml`, `release.yml` (semantic-release after `ci.yml` passes on `main`).
 
 ## Conventions
 
@@ -35,7 +35,7 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 - **Secrets never logged or stored:** the env file task and every task carrying the root token have `no_log`; the role never runs `bao operator init` (its output stays with the operator).
 - **Examples never copy a real deployment:** documentation addresses (192.0.2.0/24, 198.51.100.0/24) and made-up names.
 - **GitHub Actions pinned by full commit SHA**, tag in a trailing comment. **Exact pins for tooling**; ranges only in `requirements.yml`.
-- **A pinned upstream version in `defaults/`, `vars/` or `molecule/`** (an OpenBao, plugin or tool release the role installs or tests) carries a `# renovate: datasource=<datasource> depName=<name> [extractVersion=<regex>]` line right above it, or Renovate never sees it. Its bump is `fix(deps)` in `defaults/`/`vars/` (a patch release), `chore(deps)` in `molecule/` (no release, not automerged). A checksum pinned next to a version is updated by hand, unless a CI job of the repository does it (openbao: `plugin-sums`). `renovate.json` is identical in the ssh, power and openbao roles: change all three together.
+- **A pinned upstream version in `defaults/`, `vars/` or `molecule/`** (an OpenBao, plugin or tool release the role installs or tests) carries a `# renovate: datasource=<datasource> depName=<name> [extractVersion=<regex>]` line right above it, or Renovate never sees it. Its bump is `fix(deps)` in `defaults/`/`vars/` (a patch release), `chore(deps)` in `molecule/` (no release, not automerged). A checksum pinned next to a version is updated by hand. `renovate.json` is identical in the ssh, power and openbao roles: change all three together.
 - **License:** MIT.
 
 ## Supported platforms
@@ -67,7 +67,6 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 
 - pkcs11-tool names SHA-1 `SHA-1` as a hash but `MGF1-SHA1` as an MGF (`Unknown PKCS11 mechanism "SHA1"`); the other hashes have no dash.
 - A failure-path test must name the cause it expects (e.g. `CKR_PIN_INCORRECT`): the wrong-PIN test once passed on an unrelated script error.
-- A workflow holding a write token never runs a pull request's code: `pull_request_target` (the file comes from `main`), the branch checked out as data with `persist-credentials: false`, its values through `env`, never `${{ }}` in `run`.
 - `-e name=false` on the command line is the string `"false"`: a boolean extra var is passed as JSON, `-e '{"name": false}'`.
 - `rejectattr('state', 'equalto', 'absent')` fails with `object of type 'dict' has no attribute 'state'` when an item has no `state`: normalise the list first (`openbao_engines_norm`), or `reject('in', <the absent items>)`.
 - JSON configuration flattens an object with one key into the labels: `{"audit": [{"file": {"file": {"options": ...}}}]}` reads as three labels (`audit type must be specified`). Put `type` and `path` inside the block.
