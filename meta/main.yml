@@ -4,9 +4,8 @@ galaxy_info:
   namespace: cedricfarinazzo
   author: Cédric Farinazzo
   description: >-
-    OpenBao server or raft cluster from the official packages: KMS plugins with checksums, auto-unseal (PKCS#11,
-    ...), self-signed TLS, audit devices, telemetry, raft snapshots, secrets in a root-only environment file, and
-    post-init auth methods, engines, transit keys, policies, token roles and any API object
+    OpenBao server or raft cluster from the signed official packages: auto-unseal (PKCS#11, KMS, static), TLS,
+    audit devices, raft snapshots, and post-init auth methods, engines, transit keys, policies and token roles
 
   license: MIT
 

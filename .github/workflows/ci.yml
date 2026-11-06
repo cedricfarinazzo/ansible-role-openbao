@@ -21,6 +21,14 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: ansible-galaxy collection install -r requirements.yml
       - run: yamllint .
+      # Galaxy refuses the import of a description over 255 characters
+      - name: Galaxy description length
+        run: |
+          python -c "
+          import sys, yaml
+          d = yaml.safe_load(open('meta/main.yml'))['galaxy_info']['description']
+          sys.exit(f'meta/main.yml description: {len(d)} characters, Galaxy accepts 255') if len(d) > 255 else print(len(d), 'characters')
+          "
       - run: ansible-lint
       - run: shellcheck files/* run-tests.sh
 
