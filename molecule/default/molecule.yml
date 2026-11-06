@@ -31,7 +31,7 @@ provisioner:
         molecule_hsm_pin: "2222"
         molecule_plugin_arch: "{{ {'x86_64': 'amd64_v1', 'aarch64': 'arm64_v8'}[ansible_facts['architecture']] }}"
         # renovate: datasource=github-releases depName=openbao/openbao-plugins extractVersion=^kms-pkcs11-(?<version>v.+)
-        molecule_plugin_version: v0.3.0
+        molecule_plugin_version: v0.2.1
         # Of that version: the plugin-sums CI job updates them when the version changes
         molecule_plugin_sums:
           amd64_v1:
