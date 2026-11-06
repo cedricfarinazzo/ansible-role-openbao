@@ -30,6 +30,21 @@
         group: "{{ molecule_hsm_group }}"
         mode: u=rwX,g=rwX,o=
 
+# The input checks alone, without facts: a consumer may run them first in a play that gathers none
+- name: Input checks without facts
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Run the role's input checks
+      ansible.builtin.include_role:
+        name: ../../../../ansible-role-openbao
+        tasks_from: validate.yml
+      vars:
+        # The scenario's own fact-based values, given here
+        molecule_el: false
+        molecule_plugin_arch: amd64_v1
+        openbao_tls_common_name: openbao.example.org
+
 # AC: a bad input stops the role before anything is installed
 - name: Failure paths, before any install
   hosts: all

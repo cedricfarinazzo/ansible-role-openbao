@@ -3,7 +3,8 @@
   ansible.builtin.assert:
     that:
       - openbao_version is string and openbao_version is match('^[0-9]+\.[0-9]+\.[0-9]+$')
-      - ansible_facts['os_family'] in ['Debian', 'RedHat']
+      # Without facts (a check-only play, gather_facts: false) the family is checked at install
+      - ansible_facts['os_family'] is not defined or ansible_facts['os_family'] in ['Debian', 'RedHat']
       - openbao_gpg_key_fingerprint is string and openbao_gpg_key_fingerprint is match('^[0-9A-F]{40}$')
       - openbao_apt_repo_url is match('^https://')
       - openbao_release_url is match('^https://')
