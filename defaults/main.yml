@@ -123,7 +123,7 @@ openbao_auth_methods: []
 openbao_transit_keys: []
 # Each: {name, rules} (rules: the policy in HCL)
 openbao_policies: []
-# Each: {name, allowed_policies, ...any token role parameter: token_period, orphan, token_ttl, token_bound_cidrs, ...}
+# Each: {name, allowed_policies, ...any token role parameter: orphan, token_period, token_explicit_max_ttl, token_bound_cidrs, ...}
 openbao_token_roles: []
 # Any other API object, e.g. {path: auth/approle/role/app, data: {token_policies: [app], token_ttl: 3600}}.
 # Only the keys given are compared; one the API never reads back (a password) is written on creation only.

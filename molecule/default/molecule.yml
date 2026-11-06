@@ -95,7 +95,7 @@ provisioner:
               path "transit/decrypt/autounseal" { capabilities = ["update"] }
         openbao_token_roles:
           - {name: autounseal, allowed_policies: [autounseal], token_period: 86400, orphan: true}
-          - {name: short, allowed_policies: [autounseal], token_ttl: 600, token_bound_cidrs: [127.0.0.1/32]}
+          - {name: short, allowed_policies: [autounseal], token_explicit_max_ttl: 600, token_bound_cidrs: [127.0.0.1]}
         openbao_api_resources:
           - path: auth/approle/role/app
             data: {token_policies: [autounseal], token_ttl: 1800, secret_id_ttl: 0}

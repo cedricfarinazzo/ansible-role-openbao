@@ -124,7 +124,7 @@ The post-init part creates the `openbao-snapshot` policy (`sys/storage/raft/snap
 | `openbao_secrets_engines` | `{path, type, description?, config?, options?}`; `options` values are strings (`{version: "2"}` for kv v2); a trailing `/` is ignored |
 | `openbao_transit_keys` | `{mount, name, type?, derived?, convergent_encryption?, key_size?, exportable?, allow_plaintext_backup?, auto_rotate_period?, deletion_allowed?, min_decryption_version?, min_encryption_version?}`; `type` (default `aes256-gcm96`), `derived`, `convergent_encryption` and `key_size` cannot change once created |
 | `openbao_policies` | `{name, rules}` (HCL) |
-| `openbao_token_roles` | `{name, allowed_policies, ...}`: any token role parameter (`token_period`, `orphan`, `renewable`, `token_ttl`, `token_max_ttl`, `token_explicit_max_ttl`, `token_bound_cidrs`, `token_type`, ...) |
+| `openbao_token_roles` | `{name, allowed_policies, ...}`: any token role parameter (`orphan`, `renewable`, `token_period`, `token_explicit_max_ttl`, `token_bound_cidrs`, `token_type`, `token_no_default_policy`, `token_num_uses`, `path_suffix`, ...); a token role has no `token_ttl` (the TTL comes from the token mount) |
 | `openbao_api_resources` | `{path, data}`: any other object written with a POST and read back with a GET, e.g. an AppRole role (`auth/approle/role/app`), a Kubernetes auth config (`auth/kubernetes/config`), a userpass user |
 
 Every item takes `state: present` (default) or `absent`: absent disables the mount (its data is destroyed), deletes the key (after allowing it), the policy, the role or the object. An item left out of a list is left alone.

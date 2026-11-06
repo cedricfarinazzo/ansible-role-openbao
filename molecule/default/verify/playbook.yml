@@ -25,7 +25,8 @@
     - name: The first converge started OpenBao once (one HSM login), not start then restart
       ansible.builtin.shell: |
         set -o pipefail
-        journalctl -u openbao --no-pager -o cat | grep -c '^Started openbao.service'
+        # The id of the systemd "unit started" message: its text differs between systemd versions
+        journalctl -u openbao --no-pager -o cat MESSAGE_ID=39f53479d3a045ac8e11786248231fbf | wc -l
       args:
         executable: /bin/bash
       register: molecule_starts
@@ -274,7 +275,7 @@
           - molecule_reads.results[1].json.data.default_lease_ttl == 3600
           - molecule_reads.results[2].json.data.token_ttl == 1800
           - molecule_reads.results[2].json.data.token_policies == ['autounseal']
-          - molecule_reads.results[3].json.data.token_ttl == 600
+          - molecule_reads.results[3].json.data.token_explicit_max_ttl == 600
           - molecule_reads.results[3].json.data.token_bound_cidrs == ['127.0.0.1']
           - molecule_reads.results[4].json.data.auto_rotate_period == 2592000
 
@@ -286,23 +287,24 @@
       vars: &molecule_scratch
         openbao_root_token: "{{ molecule_root }}"
         openbao_backup_enabled: false
-        molecule_scratch_ttl: 3600
-        openbao_secrets_engines: [{path: scratch, type: kv, config: {max_lease_ttl: "{{ molecule_scratch_ttl | int }}"}}]
+        openbao_secrets_engines: [{path: scratch, type: kv, config: {max_lease_ttl: "{{ molecule_scratch_ttl | default(3600) | int }}"}}]
         openbao_auth_methods: [{path: scratch-up, type: userpass}]
         openbao_transit_keys: [{mount: transit, name: scratch}]
         openbao_policies:
-          - {name: scratch, rules: "path \"kv/data/scratch-{{ molecule_scratch_ttl }}\" { capabilities = [\"read\"] }\n"}
-        openbao_token_roles: [{name: scratch, allowed_policies: [scratch], token_ttl: "{{ molecule_scratch_ttl | int }}"}]
+          - {name: scratch, rules: "path \"kv/data/scratch-{{ molecule_scratch_ttl | default(3600) }}\" { capabilities = [\"read\"] }\n"}
+        openbao_token_roles: [{name: scratch, allowed_policies: [scratch], token_explicit_max_ttl: "{{ molecule_scratch_ttl | default(3600) | int }}"}]
         openbao_api_resources:
-          - {path: auth/scratch-up/users/u1, data: {password: not-read-back, token_ttl: "{{ molecule_scratch_ttl | int }}"}}
+          - {path: auth/scratch-up/users/u1, data: {password: not-read-back, token_ttl: "{{ molecule_scratch_ttl | default(3600) | int }}"}}
+
+    - name: The new values
+      ansible.builtin.set_fact:
+        molecule_scratch_ttl: 7200
 
     - name: Change them
       ansible.builtin.include_role:
         name: ../../../../ansible-role-openbao
         tasks_from: configure
-      vars:
-        <<: *molecule_scratch
-        molecule_scratch_ttl: 7200
+      vars: *molecule_scratch
 
     - name: Read back the changed scratch objects
       ansible.builtin.uri:
@@ -318,7 +320,7 @@
         that:
           - molecule_scratch_reads.results[0].json.data.max_lease_ttl == 7200
           - "'scratch-7200' in molecule_scratch_reads.results[1].json.data.policy"
-          - molecule_scratch_reads.results[2].json.data.token_ttl == 7200
+          - molecule_scratch_reads.results[2].json.data.token_explicit_max_ttl == 7200
           - molecule_scratch_reads.results[3].json.data.token_ttl == 7200
 
     - name: A create-only field cannot change
