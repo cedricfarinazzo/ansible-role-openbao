@@ -35,11 +35,11 @@ provisioner:
         # Of that version: the plugin-sums CI job updates them when the version changes
         molecule_plugin_sums:
           amd64_v1:
-            archive: c112c670e1bcca7a7b7625b13c0ecf1a43a62cd2651d29bf23befb2ad47c49bf
-            binary: 96fefa80e721551725ea01be79b0dae0f3951f15f01291fd87846d5e45475be6
+            archive: ed18e461bb2bf13e644194711f72aed79524fda8a7c212e8a2ef8548be761497
+            binary: e88632ee52600513bd0e77242823ef57641f1eaac019d8c66515c8bca81e007d
           arm64_v8:
-            archive: 9485217db9f2797fec0c56037e64559cdef00e0a3a0c7cc34da6492f402e5d59
-            binary: 7654edf4f5438e0d798ef6f369526f99722c2c2cab3c83b741539e120348b213
+            archive: d402f8857a88764abd8ab5b6ee7310e982873cc2b19a613d4da644a821aad3e1
+            binary: eeeea22ac0cc25f8ebafd1cb8b00ee27a6b2e166e67f29e13f2fe4436efc0df3
         openbao_api_addr: https://127.0.0.1:8200
         openbao_listener_address: 127.0.0.1:8200
         openbao_tls_subject_alt_names: ["DNS:openbao.example.org", "IP:192.0.2.10"]
