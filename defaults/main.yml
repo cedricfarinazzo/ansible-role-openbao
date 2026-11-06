@@ -1,6 +1,7 @@
 ---
 # --- Install -----------------------------------------------------------------
 # Exact OpenBao version: the official apt repository (Debian family) or the signed GitHub release (RedHat family)
+# renovate: datasource=github-releases depName=openbao/openbao
 openbao_version: "2.7.2"
 openbao_apt_repo_url: https://pkgs.openbao.org/deb
 # RedHat family: <url>/v<version>/openbao_<version>_linux_<arch>.rpm, checked against the signed checksums.txt

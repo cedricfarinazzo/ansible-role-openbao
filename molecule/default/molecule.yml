@@ -30,6 +30,9 @@ provisioner:
         molecule_hsm_group: "{{ 'ods' if molecule_el else 'softhsm' }}"
         molecule_hsm_pin: "2222"
         molecule_plugin_arch: "{{ {'x86_64': 'amd64_v1', 'aarch64': 'arm64_v8'}[ansible_facts['architecture']] }}"
+        # renovate: datasource=github-releases depName=openbao/openbao-plugins extractVersion=^kms-pkcs11-(?<version>v.+)
+        molecule_plugin_version: v0.3.0
+        # Of that version: Renovate bumps the version only, update these with it by hand
         molecule_plugin_sums:
           amd64_v1:
             archive: c112c670e1bcca7a7b7625b13c0ecf1a43a62cd2651d29bf23befb2ad47c49bf
@@ -44,9 +47,9 @@ provisioner:
         openbao_plugins:
           - type: kms
             name: pkcs11
-            version: v0.3.0
+            version: "{{ molecule_plugin_version }}"
             url: >-
-              https://github.com/openbao/openbao-plugins/releases/download/kms-pkcs11-v0.3.0/openbao-plugin-kms-pkcs11_linux_{{ molecule_plugin_arch }}.tar.gz
+              https://github.com/openbao/openbao-plugins/releases/download/kms-pkcs11-{{ molecule_plugin_version }}/openbao-plugin-kms-pkcs11_linux_{{ molecule_plugin_arch }}.tar.gz
             checksum: "{{ molecule_plugin_sums[molecule_plugin_arch].archive }}"
             binary: openbao-plugin-kms-pkcs11_linux_{{ molecule_plugin_arch }}
             binary_sha256: "{{ molecule_plugin_sums[molecule_plugin_arch].binary }}"

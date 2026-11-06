@@ -5,17 +5,24 @@
   vars:
     molecule_bao: . /etc/openbao/client.env && bao
   tasks:
+    # The role's default version, read from its defaults: a Renovate bump needs no edit here
+    - name: The version the role installs by default
+      ansible.builtin.include_vars:
+        file: ../../../defaults/main.yml
+        name: molecule_role_defaults
+
     # --- install, files, environment ---
     - name: OpenBao runs at the pinned version, held
       ansible.builtin.shell: |
         set -o pipefail
+        v={{ molecule_role_defaults.openbao_version | quote }}
         systemctl is-active openbao
         if [ {{ molecule_el | ternary('el', 'deb') }} = deb ]; then
-          dpkg-query -W -f '${Version}' openbao | grep -qx 2.7.2
+          dpkg-query -W -f '${Version}' openbao | grep -qxF "$v"
           apt-mark showhold | grep -qx openbao
         else
-          test "$(rpm -q --qf '%{VERSION}' openbao)" = 2.7.2
-          dnf versionlock list openbao | grep -q '^openbao-0:2.7.2-'
+          test "$(rpm -q --qf '%{VERSION}' openbao)" = "$v"
+          dnf versionlock list openbao | grep -qF "openbao-0:$v-"
           ! dnf versionlock list openbao | grep -q '^openbao-0:2.7.1-'
         fi
       args:

@@ -34,6 +34,31 @@
         "conventional-changelog-conventionalcommits"
       ],
       "allowedVersions": "<10"
+    },
+    {
+      "description": "A pinned version in defaults/ or vars/ is what the role installs: its bump releases a fix (README.md shows the same default, in the same pull request)",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchFileNames": [
+        "defaults/**",
+        "vars/**",
+        "README.md"
+      ],
+      "semanticCommitType": "fix"
+    },
+    {
+      "description": "A pinned version in molecule/ is a test pin: chore, no release; checksums next to it are updated by hand",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchFileNames": [
+        "molecule/**"
+      ],
+      "automerge": false,
+      "prBodyNotes": [
+        "Renovate does not update a checksum pinned next to this version: update it from the release before merging, or CI fails on the checksum check."
+      ]
     }
   ],
   "ansible-galaxy": {
@@ -41,5 +66,19 @@
       "/(^|/)(galaxy|requirements)(\\.ansible)?\\.ya?ml$/",
       "/(^|/)molecule/.+/collections\\.ya?ml$/"
     ]
-  }
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "A version pinned in the role's sources (or shown in README.md), annotated on the line above: # renovate: datasource=<datasource> depName=<name> [extractVersion=<regex>]",
+      "managerFilePatterns": [
+        "/(^|/)(defaults|vars|molecule)/.+\\.ya?ml$/",
+        "/^README\\.md$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s*\\n\\s*[A-Za-z0-9_]+: \"?(?<currentValue>[^\"\\s]+)\"?"
+      ],
+      "extractVersionTemplate": "{{#if extractVersion}}{{{extractVersion}}}{{else}}^v?(?<version>.+)${{/if}}"
+    }
+  ]
 }
