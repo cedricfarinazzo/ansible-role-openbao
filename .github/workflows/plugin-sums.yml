@@ -1,7 +1,8 @@
 name: plugin-sums
 
-# A kms-pkcs11 version bump in the Molecule scenario (Renovate) comes without its sums: compute them,
-# commit them to the pull request, then start CI on that commit.
+# A kms-pkcs11 version bump in the Molecule scenario (Renovate) comes without its sums: compute them and
+# commit them to the pull request. That push's pull_request runs wait for approval (a GITHUB_TOKEN push):
+# a maintainer approves them on the pull request.
 #
 # pull_request_target: this file and the script always come from main, never from the pull request, which
 # cannot change what runs with the write token. The pull request's branch is checked out as data only:
@@ -26,7 +27,6 @@ jobs:
     runs-on: ubuntu-26.04
     permissions:
       contents: write
-      actions: write
     steps:
       - name: The script, from main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,7 +51,7 @@ jobs:
             echo "EOF_SUMS"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Commit changed sums, start CI on the new head
+      - name: Commit changed sums
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -77,5 +77,3 @@ jobs:
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" \
             push "https://github.com/$REPO.git" "HEAD:refs/heads/$BRANCH"
-          # A push with GITHUB_TOKEN starts no workflow: start CI on the new head
-          gh workflow run ci.yml -R "$REPO" --ref "$BRANCH"
