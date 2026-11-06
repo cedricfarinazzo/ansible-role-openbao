@@ -1,0 +1,71 @@
+---
+# Secrets engines (openbao_mount_api: mounts) or auth methods (auth). Input openbao_mount_items, each
+# {path, type, description?, config?, options?, state?}, paths without a trailing slash.
+- name: Read the enabled {{ openbao_mount_kind }}
+  ansible.builtin.uri:
+    url: "{{ openbao_addr }}/v1/sys/{{ openbao_mount_api }}"
+    ca_path: "{{ openbao_tls_ca_file }}"
+    headers: {X-Vault-Token: "{{ openbao_root_token }}"}
+  register: openbao_mounts_read
+  no_log: true
+
+- name: Existing paths without a trailing slash, {{ openbao_mount_kind }}
+  ansible.builtin.set_fact:
+    openbao_mounts_existing: >-
+      {{ dict(openbao_mounts_read.json.data.keys() | map('regex_replace', '/+$', '') | list
+              | zip(openbao_mounts_read.json.data.values() | map(attribute='type') | list)) }}
+
+- name: Assert an existing path has the wanted type
+  ansible.builtin.assert:
+    that: openbao_mounts_existing[item.path] == item.type
+    fail_msg: "{{ item.path }} is enabled as {{ openbao_mounts_existing[item.path] }}, not {{ item.type }}: fix the list or set state: absent"
+    quiet: true
+  loop: "{{ openbao_mount_items | rejectattr('state', 'equalto', 'absent') | selectattr('path', 'in', openbao_mounts_existing.keys() | list) | list }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Enable each missing one of the {{ openbao_mount_kind }}
+  ansible.builtin.uri:
+    url: "{{ openbao_addr }}/v1/sys/{{ openbao_mount_api }}/{{ item.path }}"
+    method: POST
+    ca_path: "{{ openbao_tls_ca_file }}"
+    headers: {X-Vault-Token: "{{ openbao_root_token }}"}
+    body_format: json
+    body: "{{ {'type': item.type} | combine(item | dict2items | selectattr('key', 'in', ['description', 'config', 'options']) | items2dict) }}"
+    status_code: 204
+  loop: "{{ openbao_mount_items | rejectattr('state', 'equalto', 'absent') | rejectattr('path', 'in', openbao_mounts_existing.keys() | list) | list }}"
+  loop_control:
+    label: "{{ item.path }} ({{ item.type }})"
+  changed_when: true
+  no_log: true
+
+# Tuning: the description, config keys (default_lease_ttl, ...) and options, compared with what tune reads back
+- name: Tune each of the {{ openbao_mount_kind }}
+  ansible.builtin.include_tasks: api_objects.yml
+  vars:
+    openbao_objects_kind: "{{ openbao_mount_kind }} tuning"
+    openbao_objects: >-
+      {%- set out = [] -%}
+      {%- for m in openbao_mount_items if m.state != 'absent' -%}
+      {%- set data = m.config | default({}) -%}
+      {%- if m.options is defined -%}{%- set data = data | combine({'options': m.options}) -%}{%- endif -%}
+      {%- if m.description is defined -%}{%- set data = data | combine({'description': m.description}) -%}{%- endif -%}
+      {%- if data | length > 0 -%}
+      {%- set _ = out.append({'path': 'sys/' ~ openbao_mount_api ~ '/' ~ m.path ~ '/tune', 'label': m.path, 'data': data,
+                              'update_only': true}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Disable each absent one (its data is destroyed), {{ openbao_mount_kind }}
+  ansible.builtin.uri:
+    url: "{{ openbao_addr }}/v1/sys/{{ openbao_mount_api }}/{{ item.path }}"
+    method: DELETE
+    ca_path: "{{ openbao_tls_ca_file }}"
+    headers: {X-Vault-Token: "{{ openbao_root_token }}"}
+    status_code: 204
+  loop: "{{ openbao_mount_items | selectattr('state', 'equalto', 'absent') | selectattr('path', 'in', openbao_mounts_existing.keys() | list) | list }}"
+  loop_control:
+    label: "{{ item.path }}"
+  changed_when: true
+  no_log: true

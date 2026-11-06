@@ -1,0 +1,6 @@
+# Molecule playbooks name the role under test by its path
+molecule/default/converge/playbook.yml role-name[path]
+molecule/default/prepare/playbook.yml role-name[path]
+molecule/default/verify/playbook.yml role-name[path]
+molecule/cluster/converge/playbook.yml role-name[path]
+molecule/cluster/verify/playbook.yml role-name[path]

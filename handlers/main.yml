@@ -1,0 +1,16 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: not ansible_check_mode
+
+# Not running before this run: the start task starts it once with the new settings
+- name: Restart OpenBao
+  ansible.builtin.systemd_service:
+    name: openbao
+    state: restarted
+    daemon_reload: true
+  when:
+    - openbao_service_start
+    - not ansible_check_mode
+    - openbao_active_before.status.ActiveState | default('') == 'active'

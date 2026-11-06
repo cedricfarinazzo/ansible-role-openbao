@@ -1,0 +1,51 @@
+---
+- name: Converge
+  hosts: all
+  roles:
+    - role: ../../../../ansible-role-openbao
+
+# Init on one node, as an operator does it by hand; test only: the output is kept root-only on that node
+- name: Init the cluster, once
+  hosts: all
+  tasks:
+    - name: Initialize on the first node, one recovery share (static seal)
+      ansible.builtin.shell: |
+        set -o pipefail
+        umask 077
+        . /etc/openbao/client.env
+        bao operator init -recovery-shares=1 -recovery-threshold=1 -format=json > /root/molecule-init.json
+      args:
+        executable: /bin/bash
+        creates: /root/molecule-init.json
+      when: inventory_hostname == 'openbao-node1'
+      no_log: true
+
+    - name: Every node joined and unsealed
+      ansible.builtin.shell: >-
+        . /etc/openbao/client.env && bao status -format=json
+      args:
+        executable: /bin/bash
+      register: molecule_status
+      changed_when: false
+      failed_when: false
+      retries: 30
+      delay: 2
+      until: molecule_status.rc in [0, 2] and molecule_status.stdout | length > 0 and not (molecule_status.stdout | from_json).sealed
+
+    - name: Read the root token (test only)
+      ansible.builtin.slurp:
+        src: /root/molecule-init.json
+      delegate_to: openbao-node1
+      run_once: true
+      register: molecule_init
+      no_log: true
+
+- name: Post-init
+  hosts: all
+  tasks:
+    - name: Post-init configuration (writes on one node)
+      ansible.builtin.include_role:
+        name: ../../../../ansible-role-openbao
+        tasks_from: configure
+      vars:
+        openbao_root_token: "{{ (hostvars['openbao-node1'].molecule_init.content | b64decode | from_json).root_token }}"

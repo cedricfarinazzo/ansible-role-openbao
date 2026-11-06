@@ -1,0 +1,111 @@
+---
+# No official RPM repository: the release RPM, its sha256 from checksums.txt, whose signature is checked
+# against the fingerprint-checked key alone
+- name: Release directory in the download cache
+  ansible.builtin.file:
+    path: "{{ openbao_plugin_cache }}/openbao-{{ openbao_version }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: openbao_installed_version != openbao_version
+
+- name: Download the release checksums and their signature
+  ansible.builtin.get_url:
+    url: "{{ openbao_release_url }}/v{{ openbao_version }}/{{ item }}"
+    dest: "{{ openbao_plugin_cache }}/openbao-{{ openbao_version }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: [checksums.txt, checksums.txt.gpgsig]
+  when:
+    - openbao_installed_version != openbao_version
+    - not ansible_check_mode
+
+- name: Keyring with the checked key only
+  ansible.builtin.shell: >-
+    gpg --dearmor < {{ openbao_gpg_key_cached | quote }} > {{ (openbao_plugin_cache ~ '/openbao-key.gpg') | quote }}
+  changed_when: false
+  when:
+    - openbao_installed_version != openbao_version
+    - not ansible_check_mode
+
+- name: Verify the checksums' signature
+  ansible.builtin.command:
+    argv:
+      - gpgv
+      - --keyring
+      - "{{ openbao_plugin_cache }}/openbao-key.gpg"
+      - "{{ openbao_plugin_cache }}/openbao-{{ openbao_version }}/checksums.txt.gpgsig"
+      - "{{ openbao_plugin_cache }}/openbao-{{ openbao_version }}/checksums.txt"
+  changed_when: false
+  when:
+    - openbao_installed_version != openbao_version
+    - not ansible_check_mode
+
+- name: Read the signed checksums
+  ansible.builtin.slurp:
+    src: "{{ openbao_plugin_cache }}/openbao-{{ openbao_version }}/checksums.txt"
+  register: openbao_release_checksums
+  when:
+    - openbao_installed_version != openbao_version
+    - not ansible_check_mode
+
+- name: Download the RPM, checksum checked
+  ansible.builtin.get_url:
+    url: "{{ openbao_release_url }}/v{{ openbao_version }}/{{ openbao_rpm_file }}"
+    dest: "{{ openbao_plugin_cache }}/openbao-{{ openbao_version }}/{{ openbao_rpm_file }}"
+    checksum: "sha256:{{ openbao_rpm_sha256 }}"
+    owner: root
+    group: root
+    mode: "0600"
+  vars:
+    openbao_rpm_sha256: >-
+      {{ (openbao_release_checksums.content | b64decode).splitlines()
+         | select('match', '^[0-9a-f]{64}  ' ~ (openbao_rpm_file | regex_escape) ~ '$')
+         | map('split') | map('first') | first | default('missing') }}
+  when:
+    - openbao_installed_version != openbao_version
+    - not ansible_check_mode
+
+# The version lock keeps dnf (EPEL ships openbao too) from moving it: a new openbao_version is the upgrade
+- name: Release the version lock for the upgrade
+  ansible.builtin.command: dnf versionlock delete openbao
+  register: openbao_unlock
+  changed_when: openbao_unlock.rc == 0
+  failed_when: false
+  when:
+    - openbao_present
+    - openbao_installed_version != openbao_version
+    - not ansible_check_mode
+
+- name: Install OpenBao {{ openbao_version }}
+  ansible.builtin.dnf:
+    name: "{{ openbao_plugin_cache }}/openbao-{{ openbao_version }}/{{ openbao_rpm_file }}"
+    state: present
+    # Integrity: the signed checksums above
+    disable_gpg_check: true
+  when:
+    - openbao_installed_version != openbao_version
+    - not ansible_check_mode
+
+- name: Install the extra packages
+  ansible.builtin.dnf:
+    name: "{{ openbao_packages_extra + (['polkit'] if openbao_pcsc_access else []) }}"
+    state: present
+  when: openbao_packages_extra | length > 0 or openbao_pcsc_access
+
+- name: Read the version lock
+  ansible.builtin.command: dnf versionlock list openbao
+  register: openbao_lock
+  changed_when: false
+  check_mode: false
+  when: not openbao_fresh_check
+
+- name: Lock the OpenBao version
+  ansible.builtin.command: dnf versionlock add openbao-{{ openbao_version }}
+  changed_when: true
+  when:
+    - not openbao_fresh_check
+    - not ansible_check_mode
+    - openbao_lock.stdout_lines | select('match', '^openbao-(0:)?' ~ (openbao_version | regex_escape) ~ '-') | list | length == 0

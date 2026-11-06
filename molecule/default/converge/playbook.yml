@@ -1,0 +1,57 @@
+---
+- name: Converge
+  hosts: all
+  roles:
+    - role: ../../../../ansible-role-openbao
+
+# Init as an operator does it by hand; test only: the output is kept in a root-only file so a rerun can
+# reuse the root token (Molecule's idempotence step reruns this whole playbook: it must change nothing)
+- name: Init, once
+  hosts: all
+  tasks:
+    - name: Nothing to init in check mode
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
+    - name: Initialize with the PKCS#11 seal (3 recovery shares, threshold 2)
+      ansible.builtin.shell: |
+        set -o pipefail
+        umask 077
+        . /etc/openbao/client.env
+        bao operator init -recovery-shares=3 -recovery-threshold=2 -format=json > /root/molecule-init.json
+      args:
+        executable: /bin/bash
+        creates: /root/molecule-init.json
+      no_log: true
+
+    - name: Read the test instance's root token
+      ansible.builtin.slurp:
+        src: /root/molecule-init.json
+      register: molecule_init
+      no_log: true
+
+    - name: Unsealed by the seal
+      ansible.builtin.shell: >-
+        . /etc/openbao/client.env && bao status -format=json
+      args:
+        executable: /bin/bash
+      register: molecule_status
+      changed_when: false
+      failed_when: false
+      retries: 15
+      delay: 2
+      until: molecule_status.rc == 0 and not (molecule_status.stdout | from_json).sealed
+
+- name: Post-init
+  hosts: all
+  tasks:
+    - name: Nothing to configure in check mode
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
+    - name: Post-init configuration
+      ansible.builtin.include_role:
+        name: ../../../../ansible-role-openbao
+        tasks_from: configure
+      vars:
+        openbao_root_token: "{{ (molecule_init.content | b64decode | from_json).root_token }}"

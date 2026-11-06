@@ -1,0 +1,244 @@
+---
+- name: Drop-in directory of the unit
+  ansible.builtin.file:
+    path: /etc/systemd/system/openbao.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Plugin directory
+  ansible.builtin.file:
+    path: "{{ openbao_plugin_directory }}"
+    state: directory
+    owner: root
+    group: openbao
+    mode: "0750"
+  when: not openbao_fresh_check
+
+- name: Install each checked plugin binary
+  ansible.builtin.copy:
+    src: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}-{{ item.checksum[:16] }}/{{ item.binary }}"
+    dest: "{{ openbao_plugin_directory }}/{{ item.binary }}"
+    remote_src: true
+    owner: root
+    group: openbao
+    mode: "0750"
+  loop: "{{ openbao_plugins }}"
+  loop_control:
+    label: "{{ item.binary }}"
+  register: openbao_changed_plugins
+  notify: Restart OpenBao
+  when: not openbao_fresh_check
+
+- name: Server configuration
+  ansible.builtin.copy:
+    dest: "{{ openbao_config_file }}"
+    content: "{{ openbao_config | to_nice_json }}\n"
+    owner: root
+    group: openbao
+    mode: "0640"
+    validate: bao operator validate-config -config=%s
+  register: openbao_changed_config
+  notify: Restart OpenBao
+  when: not openbao_fresh_check
+
+# Read by systemd as root before it drops to the openbao user
+- name: Server environment
+  ansible.builtin.template:
+    src: openbao.env.j2
+    dest: "{{ openbao_env_file }}"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  register: openbao_changed_env
+  notify: Restart OpenBao
+  when: not openbao_fresh_check
+
+- name: Service restart policy
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/openbao.service.d/ansible.conf
+    content: |
+      # Managed by Ansible: every failed start retries the seal (and an HSM login)
+      [Unit]
+      StartLimitIntervalSec={{ openbao_service_start_limit_interval_sec }}
+      StartLimitBurst={{ openbao_service_start_limit_burst }}
+
+      [Service]
+      Restart={{ openbao_service_restart }}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+  when: not openbao_fresh_check
+
+- name: Client settings for operators and scripts (no secret)
+  ansible.builtin.copy:
+    dest: "{{ openbao_client_env_file }}"
+    content: |
+      # Managed by Ansible: source it, then run bao
+      BAO_ADDR={{ openbao_local_addr }}
+      BAO_CACERT={{ openbao_tls_ca_file }}
+      export BAO_ADDR BAO_CACERT
+    owner: root
+    group: root
+    mode: "0644"
+  when: not openbao_fresh_check
+
+- name: OAEP check script
+  ansible.builtin.copy:
+    src: openbao-pkcs11-oaep-check
+    dest: /usr/local/sbin/openbao-pkcs11-oaep-check
+    owner: root
+    group: root
+    mode: "0755"
+  when: openbao_pkcs11_oaep_check
+
+- name: Token script
+  ansible.builtin.copy:
+    src: openbao-token-create
+    dest: /usr/local/sbin/openbao-token-create
+    owner: root
+    group: root
+    mode: "0755"
+  when: openbao_token_script
+
+- name: Audit log directory
+  ansible.builtin.file:
+    path: "{{ openbao_audit_log_dir }}"
+    state: directory
+    owner: openbao
+    group: openbao
+    mode: "0750"
+  when:
+    - openbao_file_audit_paths | length > 0
+    - not openbao_fresh_check
+
+- name: Logrotate for the audit logs
+  ansible.builtin.package:
+    name: logrotate
+    state: present
+  when:
+    - openbao_file_audit_paths | length > 0
+    - openbao_audit_logrotate
+
+- name: Rotate the file audit logs (OpenBao reopens them on SIGHUP)
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/openbao
+    content: |
+      # Managed by Ansible
+      {{ openbao_audit_log_dir }}/*.log {
+        daily
+        rotate {{ openbao_audit_logrotate_keep }}
+        compress
+        delaycompress
+        missingok
+        notifempty
+        create 0600 openbao openbao
+        sharedscripts
+        postrotate
+          systemctl reload openbao.service > /dev/null 2>&1 || true
+        endscript
+      }
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - openbao_file_audit_paths | length > 0
+    - openbao_audit_logrotate
+
+- name: No audit log rotation without a file audit device
+  ansible.builtin.file:
+    path: /etc/logrotate.d/openbao
+    state: absent
+  when: openbao_file_audit_paths | length == 0 or not openbao_audit_logrotate
+
+- name: Snapshot directory
+  ansible.builtin.file:
+    path: "{{ openbao_backup_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: openbao_backup_enabled
+
+- name: Snapshot script
+  ansible.builtin.copy:
+    src: openbao-raft-snapshot
+    dest: /usr/local/sbin/openbao-raft-snapshot
+    owner: root
+    group: root
+    mode: "0755"
+  when: openbao_backup_enabled
+
+- name: Snapshot service and timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/{{ item.name }}
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - name: openbao-snapshot.service
+      content: |
+        # Managed by Ansible
+        [Unit]
+        Description=OpenBao raft snapshot
+        After=openbao.service
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/sbin/openbao-raft-snapshot {{ openbao_backup_dir }} {{ openbao_backup_keep }}
+    - name: openbao-snapshot.timer
+      content: |
+        # Managed by Ansible
+        [Unit]
+        Description=OpenBao raft snapshot, {{ openbao_backup_schedule }}
+
+        [Timer]
+        OnCalendar={{ openbao_backup_schedule }}
+        Persistent=true
+        RandomizedDelaySec=10min
+
+        [Install]
+        WantedBy=timers.target
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Reload systemd
+  when: openbao_backup_enabled
+
+- name: Snapshot timer enabled
+  ansible.builtin.systemd_service:
+    name: openbao-snapshot.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+  when:
+    - openbao_backup_enabled
+    - openbao_service_start
+    - not ansible_check_mode
+
+- name: Is a snapshot timer installed
+  ansible.builtin.stat:
+    path: /etc/systemd/system/openbao-snapshot.timer
+  register: openbao_timer_file
+  when: not openbao_backup_enabled
+
+- name: No snapshot timer when disabled
+  ansible.builtin.systemd_service:
+    name: openbao-snapshot.timer
+    state: stopped
+    enabled: false
+  when:
+    - not openbao_backup_enabled
+    - openbao_timer_file.stat.exists
+    - not ansible_check_mode
+
+- name: Remove the snapshot units when disabled
+  ansible.builtin.file:
+    path: /etc/systemd/system/{{ item }}
+    state: absent
+  loop: [openbao-snapshot.timer, openbao-snapshot.service]
+  notify: Reload systemd
+  when: not openbao_backup_enabled

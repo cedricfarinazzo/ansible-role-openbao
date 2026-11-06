@@ -1,0 +1,130 @@
+---
+- name: Verify
+  hosts: all
+  vars:
+    molecule_bao: . /etc/openbao/client.env && bao
+  tasks:
+    - name: Read the root token (test only)
+      ansible.builtin.slurp:
+        src: /root/molecule-init.json
+      delegate_to: openbao-node1
+      run_once: true
+      register: molecule_init
+      no_log: true
+
+    - name: Keep it
+      ansible.builtin.set_fact:
+        molecule_root: "{{ (molecule_init.content | b64decode | from_json).root_token }}"
+      no_log: true
+
+    - name: Each node trusts every member's certificate (3 in its bundle)
+      ansible.builtin.shell: |
+        set -o pipefail
+        grep -c 'BEGIN CERTIFICATE' /opt/openbao/tls/ca-bundle.pem
+      args:
+        executable: /bin/bash
+      register: molecule_bundle
+      changed_when: false
+      failed_when: molecule_bundle.stdout != '3'
+
+    - name: The certificate names the node's API host
+      ansible.builtin.shell: |
+        set -o pipefail
+        openssl x509 -in /opt/openbao/tls/tls.crt -noout -ext subjectAltName | tr -d ' \n'
+      args:
+        executable: /bin/bash
+      register: molecule_san
+      changed_when: false
+      failed_when: "'DNS:' ~ inventory_hostname not in molecule_san.stdout"
+
+    - name: The cluster port listens on every address (ss shows a wildcard as *)
+      ansible.builtin.shell: |
+        set -o pipefail
+        ss -Hltn 'sport = :8201' | awk '{print $4}'
+      args:
+        executable: /bin/bash
+      register: molecule_cluster
+      changed_when: false
+      failed_when: molecule_cluster.stdout_lines | reject('in', ['*:8201', '0.0.0.0:8201', '[::]:8201']) | list | length > 0
+        or molecule_cluster.stdout_lines | length == 0
+
+    - name: Three voters in the raft configuration
+      ansible.builtin.shell: >-
+        {{ molecule_bao }} operator raft list-peers -format=json
+      args:
+        executable: /bin/bash
+      environment:
+        BAO_TOKEN: "{{ molecule_root }}"
+      register: molecule_peers
+      changed_when: false
+      run_once: true
+      no_log: true
+      failed_when: >-
+        (molecule_peers.stdout | from_json).data.config.servers | selectattr('voter') | map(attribute='node_id') | sort
+        != ['openbao-node1', 'openbao-node2', 'openbao-node3']
+
+    - name: The post-init part ran once, its kv-v2 engine and policy are there
+      ansible.builtin.shell: |
+        set -o pipefail
+        . /etc/openbao/client.env
+        bao secrets list -format=json | python3 -c 'import json,sys; print(json.load(sys.stdin)["kv/"]["options"]["version"])'
+        bao policy read kv-read > /dev/null
+      args:
+        executable: /bin/bash
+      environment:
+        BAO_TOKEN: "{{ molecule_root }}"
+      register: molecule_kv
+      changed_when: false
+      failed_when: molecule_kv.stdout != '2'
+      no_log: true
+
+    - name: Written on the last node, read on the first
+      ansible.builtin.shell: >-
+        {{ molecule_bao }} kv put -mount=kv molecule value={{ item.value }}
+      args:
+        executable: /bin/bash
+      environment:
+        BAO_TOKEN: "{{ molecule_root }}"
+      changed_when: true
+      when: inventory_hostname == 'openbao-node3'
+      loop: [{value: replicated}]
+      no_log: true
+
+    - name: Read it back on the first node
+      ansible.builtin.shell: >-
+        {{ molecule_bao }} kv get -mount=kv -field=value molecule
+      args:
+        executable: /bin/bash
+      environment:
+        BAO_TOKEN: "{{ molecule_root }}"
+      register: molecule_read
+      changed_when: false
+      when: inventory_hostname == 'openbao-node1'
+      failed_when: molecule_read.stdout != 'replicated'
+      no_log: true
+
+    - name: Snapshots on the second node (a standby), the newest two kept
+      ansible.builtin.shell: |
+        set -o pipefail
+        for i in 1 2 3; do systemctl start openbao-snapshot.service; sleep 1; done
+        find /var/backups/openbao -name 'openbao-*.snap' -size +0 | wc -l
+      args:
+        executable: /bin/bash
+      register: molecule_snaps
+      changed_when: true
+      when: inventory_hostname == 'openbao-node2'
+      failed_when: molecule_snaps.stdout != '2'
+
+    - name: Only the second node has a snapshot token and timer
+      ansible.builtin.shell: |
+        set -o pipefail
+        if [ {{ inventory_hostname }} = openbao-node2 ]; then
+          test "$(stat -c '%U:%G %a' /etc/openbao/backup.token)" = 'root:root 400'
+          systemctl is-enabled --quiet openbao-snapshot.timer
+        else
+          test ! -e /etc/openbao/backup.token
+          ! systemctl is-enabled --quiet openbao-snapshot.timer 2>/dev/null
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false

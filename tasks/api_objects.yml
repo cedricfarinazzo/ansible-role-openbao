@@ -1,0 +1,68 @@
+---
+# Read, then write only what differs, then delete what is absent. Input openbao_objects, each:
+#   {path, label, data?, state? (present), read_path? (path), create_only? (never rewritten: a difference stops
+#    the run), update_only? (written only when it exists)}
+# Only the keys of data that the API reads back are compared (a mapping one level deep).
+- name: Read each {{ openbao_objects_kind }}
+  ansible.builtin.uri:
+    url: "{{ openbao_addr }}/v1/{{ item.read_path | default(item.path) }}"
+    ca_path: "{{ openbao_tls_ca_file }}"
+    headers: {X-Vault-Token: "{{ openbao_root_token }}"}
+    status_code: [200, 404]
+  loop: "{{ openbao_objects }}"
+  loop_control:
+    label: "{{ item.label }}"
+  register: openbao_objects_read
+  no_log: true
+
+- name: Assert nothing create-only differs, {{ openbao_objects_kind }}
+  ansible.builtin.assert:
+    that: not openbao_object_diff | bool
+    fail_msg: "{{ item.item.label }}: {{ openbao_object_diff_keys }} cannot change once created; delete it first (state: absent)"
+    quiet: true
+  vars:
+    openbao_object_have: "{{ item.json.data | default(item.json) | default({}) }}"
+  loop: "{{ openbao_objects_read.results | selectattr('status', 'equalto', 200) | list }}"
+  loop_control:
+    label: "{{ item.item.label }}"
+  when:
+    - item.item.create_only | default(false)
+    - item.item.state | default('present') == 'present'
+
+- name: Write each missing or changed {{ openbao_objects_kind }}
+  ansible.builtin.uri:
+    url: "{{ openbao_addr }}/v1/{{ item.item.path }}"
+    method: POST
+    ca_path: "{{ openbao_tls_ca_file }}"
+    headers: {X-Vault-Token: "{{ openbao_root_token }}"}
+    body_format: json
+    body: "{{ item.item.data | default({}) }}"
+    status_code: [200, 204]
+  vars:
+    openbao_object_have: "{{ item.json.data | default(item.json) | default({}) }}"
+  loop: "{{ openbao_objects_read.results }}"
+  loop_control:
+    label: "{{ item.item.label }}"
+  when:
+    - item.item.state | default('present') == 'present'
+    - >-
+      (item.status == 404 and not item.item.update_only | default(false))
+      or (item.status == 200 and not item.item.create_only | default(false) and openbao_object_diff | bool)
+  changed_when: true
+  no_log: true
+
+- name: Delete each absent {{ openbao_objects_kind }}
+  ansible.builtin.uri:
+    url: "{{ openbao_addr }}/v1/{{ item.item.path }}"
+    method: DELETE
+    ca_path: "{{ openbao_tls_ca_file }}"
+    headers: {X-Vault-Token: "{{ openbao_root_token }}"}
+    status_code: [200, 204]
+  loop: "{{ openbao_objects_read.results }}"
+  loop_control:
+    label: "{{ item.item.label }}"
+  when:
+    - item.item.state | default('present') == 'absent'
+    - item.status == 200
+  changed_when: true
+  no_log: true

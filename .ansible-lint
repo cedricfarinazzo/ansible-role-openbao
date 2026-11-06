@@ -1,0 +1,10 @@
+---
+profile: production
+skip_list:
+  - yaml[line-length]  # long URLs and checksums
+loop_var_prefix: "^(__|{role}_)"
+exclude_paths:
+  - .cache/
+  - .github/
+  - .venv/
+  - node_modules/

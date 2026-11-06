@@ -1,0 +1,6 @@
+# Controller-side tooling for lint and Molecule, pinned exactly; Renovate bumps them.
+ansible-core==2.22.0
+ansible-lint==26.10.1
+molecule==26.10.0
+molecule-plugins[docker]==26.11.0
+yamllint==1.38.0

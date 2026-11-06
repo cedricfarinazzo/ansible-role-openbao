@@ -1,0 +1,29 @@
+#!/bin/bash
+# RSA-OAEP round trip on a PKCS#11 key, as the seal does it: encrypt with the public key in software,
+# decrypt on the token. Logs in once with the PIN from BAO_HSM_PIN; never prints it.
+# Usage: openbao-pkcs11-oaep-check <module> <slot|label:TOKEN> <key id hex> <hash: sha1|sha224|sha256|sha384|sha512>
+set -euo pipefail
+
+module=$1 token=$2 id=$3 hash=$4
+[[ -n ${BAO_HSM_PIN:-} ]] || { echo "BAO_HSM_PIN is not set" >&2; exit 2; }
+case $token in
+  label:*) sel=(--token-label "${token#label:}") ;;
+  *) sel=(--slot "$token") ;;
+esac
+H=${hash^^}
+# pkcs11-tool spells SHA-1 with a dash as a hash, without one in the MGF name (pkcs11-tool.c)
+hash_name=$H; [[ $H == SHA1 ]] && hash_name=SHA-1
+
+d=$(mktemp -d /dev/shm/openbao-oaep.XXXXXX)
+trap 'rm -rf "$d"' EXIT
+cd "$d"
+pkcs11-tool --module "$module" "${sel[@]}" --read-object --type pubkey --id "$id" -o pub.der
+openssl pkey -pubin -inform DER -in pub.der -out pub.pem
+head -c 32 /dev/urandom > plain
+openssl pkeyutl -encrypt -pubin -inkey pub.pem -in plain -out enc \
+  -pkeyopt rsa_padding_mode:oaep -pkeyopt "rsa_oaep_md:$hash" -pkeyopt "rsa_mgf1_md:$hash"
+pkcs11-tool --module "$module" "${sel[@]}" --login --pin env:BAO_HSM_PIN --decrypt --id "$id" \
+  --mechanism RSA-PKCS-OAEP --hash-algorithm "$hash_name" --mgf "MGF1-$H" -i enc -o dec
+# sha256sum, not cmp: coreutils is on every host, diffutils is not (minimal EL)
+[ "$(sha256sum < plain)" = "$(sha256sum < dec)" ] || { echo "OAEP $hash: the token's decryption differs" >&2; exit 1; }
+echo "OAEP $hash: pass"

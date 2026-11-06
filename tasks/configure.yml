@@ -1,0 +1,161 @@
+---
+# Post-init: run after `bao operator init`, with a root token given at run time.
+# The token is never written: every task that carries it has no_log. In a cluster, the writes run on the
+# first member in the play; each host with snapshots enabled gets its own snapshot token.
+- name: Assert a root token is given at run time
+  ansible.builtin.assert:
+    that: openbao_root_token is string and openbao_root_token | length > 0
+    fail_msg: "Give the root token at run time (-e openbao_root_token=... or a vars prompt); it is never stored"
+    quiet: true
+
+- name: Assert the post-init inputs
+  ansible.builtin.assert:
+    that:
+      - openbao_mount_lists | rejectattr('path', 'defined') | list | length == 0
+      - openbao_mount_lists | rejectattr('type', 'defined') | list | length == 0
+      - openbao_mount_lists | selectattr('config', 'defined') | rejectattr('config', 'mapping') | list | length == 0
+      - openbao_mount_lists | selectattr('options', 'defined') | rejectattr('options', 'mapping') | list | length == 0
+      - >-
+        openbao_mount_lists | selectattr('options', 'defined') | map(attribute='options') | map('dict2items') | flatten
+        | map(attribute='value') | reject('string') | list | length == 0
+      - openbao_transit_keys | rejectattr('mount', 'defined') | list | length == 0
+      - openbao_transit_keys | rejectattr('name', 'defined') | list | length == 0
+      - openbao_policies | rejectattr('name', 'defined') | list | length == 0
+      - openbao_policies | reject('in', openbao_absent_items) | rejectattr('rules', 'defined') | list | length == 0
+      - openbao_token_roles | rejectattr('name', 'defined') | list | length == 0
+      - openbao_token_roles | reject('in', openbao_absent_items) | rejectattr('allowed_policies', 'defined') | list | length == 0
+      - openbao_api_resources | rejectattr('path', 'defined') | list | length == 0
+      - openbao_api_resources | reject('in', openbao_absent_items) | rejectattr('data', 'mapping') | list | length == 0
+      - >-
+        (openbao_mount_lists + openbao_transit_keys + openbao_policies + openbao_token_roles + openbao_api_resources)
+        | selectattr('state', 'defined') | rejectattr('state', 'in', ['present', 'absent']) | list | length == 0
+    fail_msg: >-
+      Engines and auth methods need path and type (config and options mappings, option values strings), transit keys
+      mount and name, policies name and rules, token roles name and allowed_policies, API resources path and data
+      (a mapping); state is present or absent
+    quiet: true
+  vars:
+    openbao_mount_lists: "{{ openbao_secrets_engines + openbao_auth_methods }}"
+    openbao_absent_items: >-
+      {{ (openbao_policies + openbao_token_roles + openbao_api_resources) | selectattr('state', 'defined')
+         | selectattr('state', 'equalto', 'absent') | list }}
+
+# The post-init play may run without the main part: publish again what the members read from each other
+- name: Publish this node's snapshot setting to the other members
+  ansible.builtin.set_fact:
+    openbao_node_backup_enabled: "{{ openbao_backup_enabled }}"
+
+- name: Configure once (the cluster's first member in the play, or each single node)
+  when: openbao_configure_here | bool
+  block:
+    - name: Assert OpenBao is initialized, unsealed and reachable (a standby forwards the writes)
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/sys/health?standbyok=true"
+        ca_path: "{{ openbao_tls_ca_file }}"
+        status_code: 200
+
+    - name: Auth methods
+      ansible.builtin.include_tasks: mounts.yml
+      vars:
+        openbao_mount_kind: auth methods
+        openbao_mount_api: auth
+        openbao_mount_items: "{{ openbao_auth_norm }}"
+
+    - name: Secrets engines
+      ansible.builtin.include_tasks: mounts.yml
+      vars:
+        openbao_mount_kind: secrets engines
+        openbao_mount_api: mounts
+        openbao_mount_items: "{{ openbao_engines_norm }}"
+
+    # A key: created with its type and create-time fields, then its config; deletion needs deletion_allowed first
+    - name: Transit keys
+      ansible.builtin.include_tasks: api_objects.yml
+      vars:
+        openbao_objects_kind: transit key
+        openbao_objects: "{{ openbao_transit_objects }}"
+
+    - name: ACL policies
+      ansible.builtin.include_tasks: api_objects.yml
+      vars:
+        openbao_objects_kind: policy
+        openbao_objects: >-
+          {%- set out = [] -%}
+          {%- for p in openbao_policies + (openbao_backup_policy if openbao_backup_wanted | bool else []) -%}
+          {%- set _ = out.append({'path': 'sys/policies/acl/' ~ p.name, 'label': p.name, 'state': p.state | default('present'),
+                                  'data': {'policy': p.rules | default('')}}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Token roles
+      ansible.builtin.include_tasks: api_objects.yml
+      vars:
+        openbao_objects_kind: token role
+        openbao_objects: >-
+          {%- set out = [] -%}
+          {%- for r in openbao_token_roles + (openbao_backup_token_role if openbao_backup_wanted | bool else []) -%}
+          {%- set _ = out.append({'path': 'auth/token/roles/' ~ r.name, 'label': r.name, 'state': r.state | default('present'),
+                                  'data': r | dict2items | rejectattr('key', 'in', ['name', 'state']) | items2dict}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Other API resources
+      ansible.builtin.include_tasks: api_objects.yml
+      vars:
+        openbao_objects_kind: API resource
+        openbao_objects: >-
+          {%- set out = [] -%}
+          {%- for r in openbao_api_resources -%}
+          {%- set _ = out.append({'path': r.path | regex_replace('^/+', ''), 'label': r.path, 'state': r.state | default('present'),
+                                  'data': r.data | default({})}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+# --- the snapshot token of this host: kept while valid, else a new one ---
+- name: Snapshot token
+  when: openbao_backup_enabled
+  block:
+    - name: Is there a snapshot token
+      ansible.builtin.stat:
+        path: "{{ openbao_backup_token_file }}"
+      register: openbao_backup_token_stat
+
+    - name: Read it
+      ansible.builtin.slurp:
+        src: "{{ openbao_backup_token_file }}"
+      register: openbao_backup_token_current
+      when: openbao_backup_token_stat.stat.exists
+      no_log: true
+
+    - name: Is it still valid
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/auth/token/lookup-self"
+        ca_path: "{{ openbao_tls_ca_file }}"
+        headers: {X-Vault-Token: "{{ openbao_backup_token_current.content | b64decode | trim }}"}
+        status_code: [200, 403]
+      register: openbao_backup_token_lookup
+      when: openbao_backup_token_stat.stat.exists
+      no_log: true
+
+    - name: Create a snapshot token
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/auth/token/create/{{ openbao_backup_token_role[0].name }}"
+        method: POST
+        ca_path: "{{ openbao_tls_ca_file }}"
+        headers: {X-Vault-Token: "{{ openbao_root_token }}"}
+        body_format: json
+        body: {display_name: "snapshot-{{ inventory_hostname }}"}
+      register: openbao_backup_token_new
+      when: not openbao_backup_token_stat.stat.exists or openbao_backup_token_lookup.status != 200
+      changed_when: true
+      no_log: true
+
+    - name: Keep it for the timer (root, 0400)
+      ansible.builtin.copy:
+        dest: "{{ openbao_backup_token_file }}"
+        content: "{{ openbao_backup_token_new.json.auth.client_token }}\n"
+        owner: root
+        group: root
+        mode: "0400"
+      when: openbao_backup_token_new is not skipped
+      no_log: true

@@ -1,0 +1,177 @@
+---
+openbao_plugin_types: [auth, database, kms, secret]
+openbao_env_file: /etc/openbao/openbao.env
+openbao_config_file: /etc/openbao/openbao.hcl
+openbao_client_env_file: /etc/openbao/client.env
+openbao_backup_token_file: /etc/openbao/backup.token
+openbao_plugin_cache: /var/cache/openbao/plugins
+openbao_apt_keyring: /etc/apt/keyrings/openbao.asc
+openbao_gpg_key_cached: "{{ openbao_plugin_cache }}/openbao-key-{{ openbao_gpg_key_fingerprint }}.asc"
+# The RPM release assets name the architecture the Go way
+openbao_rpm_arch: >-
+  {{ {'x86_64': 'amd64', 'aarch64': 'arm64', 'armv7l': 'armv6', 'ppc64le': 'ppc64le', 's390x': 's390x',
+      'riscv64': 'riscv64'}[ansible_facts['architecture']] | default(ansible_facts['architecture']) }}
+openbao_rpm_file: openbao_{{ openbao_version }}_linux_{{ openbao_rpm_arch }}.rpm
+
+# The plugin stanzas: [{<type>: {<name>: {command, version, sha256sum, args?, env?}}}]
+openbao_plugin_stanzas: >-
+  {%- set out = [] -%}
+  {%- for p in openbao_plugins -%}
+  {%- set body = {'command': p.binary, 'version': p.version, 'sha256sum': p.binary_sha256} -%}
+  {%- if p.args is defined -%}{%- set _ = body.update({'args': p.args}) -%}{%- endif -%}
+  {%- if p.env is defined -%}{%- set _ = body.update({'env': p.env}) -%}{%- endif -%}
+  {%- set _ = out.append({p.type: {p.name: body}}) -%}
+  {%- endfor -%}
+  {{ out | to_json }}
+
+# The audit stanzas: [{<path>: {type, path, description?, local?, options}}]. type and path inside: JSON
+# flattens a one-key object, so {<type>: {<path>: {options}}} would read as three labels.
+openbao_audit_stanzas: >-
+  {%- set out = [] -%}
+  {%- for a in openbao_audit_devices -%}
+  {%- set body = {'type': a.type, 'path': a.path, 'options': a.options | default({})} -%}
+  {%- if a.description is defined -%}{%- set _ = body.update({'description': a.description}) -%}{%- endif -%}
+  {%- if a.local is defined -%}{%- set _ = body.update({'local': a.local}) -%}{%- endif -%}
+  {%- set _ = out.append({a.path: body}) -%}
+  {%- endfor -%}
+  {{ out | to_json }}
+
+# Host of openbao_api_addr, without brackets for IPv6
+openbao_api_host: "{{ (openbao_api_addr | urlsplit('hostname')) if openbao_api_addr | length > 0 else '' }}"
+openbao_api_host_is_ip: "{{ openbao_api_host is match('^[0-9.]+$') or ':' in openbao_api_host }}"
+openbao_cluster_addr_default: >-
+  {{ 'https://127.0.0.1:8201' if openbao_cluster_group == ''
+     else 'https://' ~ ('[' ~ openbao_api_host ~ ']' if ':' in openbao_api_host else openbao_api_host) ~ ':8201' }}
+
+openbao_cluster_members: "{{ (groups[openbao_cluster_group] | default([])) if openbao_cluster_group | length > 0 else [] }}"
+openbao_cluster_retry_join_default: >-
+  {%- set out = [] -%}
+  {%- for h in openbao_cluster_members if h != inventory_hostname -%}
+  {%- set _ = out.append({'leader_api_addr': hostvars[h].openbao_node_api_addr, 'leader_ca_cert_file': openbao_tls_ca_file}) -%}
+  {%- endfor -%}
+  {{ out }}
+
+# retry_join goes into a raft storage stanza that does not set its own
+openbao_storage_effective: >-
+  {{ openbao_storage | combine({'raft': openbao_storage.raft | combine({'retry_join': openbao_raft_retry_join})})
+     if (openbao_storage.raft is defined and openbao_raft_retry_join | length > 0 and openbao_storage.raft.retry_join is not defined)
+     else openbao_storage }}
+
+openbao_listener_tcp: >-
+  {{ {'address': openbao_listener_address, 'cluster_address': openbao_cluster_listen_address,
+      'tls_cert_file': openbao_tls_cert_file, 'tls_key_file': openbao_tls_key_file}
+     | combine(openbao_listener_options, recursive=true) }}
+
+openbao_config_base:
+  ui: "{{ openbao_ui }}"
+  api_addr: "{{ openbao_api_addr }}"
+  cluster_addr: "{{ openbao_cluster_addr }}"
+  log_level: "{{ openbao_log_level }}"
+  log_format: "{{ openbao_log_format }}"
+  storage: "{{ openbao_storage_effective }}"
+  listener: "{{ [{'tcp': openbao_listener_tcp}] + openbao_listeners_extra }}"
+  plugin_directory: "{{ openbao_plugin_directory }}"
+
+# JSON is valid OpenBao configuration, also in a .hcl file
+openbao_config: >-
+  {{ openbao_config_base
+     | combine({'plugin': openbao_plugin_stanzas | from_json} if openbao_plugins | length > 0 else {})
+     | combine({'seal': openbao_seal} if openbao_seal | length > 0 else {})
+     | combine({'telemetry': openbao_telemetry} if openbao_telemetry | length > 0 else {})
+     | combine({'audit': openbao_audit_stanzas | from_json} if openbao_audit_devices | length > 0 else {})
+     | combine(openbao_config_extra, recursive=true) }}
+
+openbao_tls_sans: >-
+  {{ (['IP:127.0.0.1', 'DNS:localhost']
+      + ([('IP:' if openbao_api_host_is_ip | bool else 'DNS:') ~ openbao_api_host] if openbao_api_host | length > 0 else [])
+      + openbao_tls_subject_alt_names) | unique }}
+
+# A start is due when OpenBao is not running, or when a change notified its restart
+openbao_start_due: >-
+  {{ openbao_active_before.status.ActiveState | default('') != 'active'
+     or ([openbao_changed_groups | default({}), openbao_changed_tls_key | default({}),
+          openbao_changed_tls_cert | default({}), openbao_changed_plugins | default({}),
+          openbao_changed_config | default({}), openbao_changed_env | default({})]
+         | select('changed') | list | length > 0) }}
+
+# Where the role itself reaches the API on the host: the listener's address, or loopback for a wildcard
+openbao_listener_host: "{{ openbao_listener_address.rsplit(':', 1) | first }}"
+openbao_listener_port: "{{ openbao_listener_address.rsplit(':', 1) | last }}"
+openbao_local_addr: >-
+  https://{{ '127.0.0.1' if openbao_listener_host in ['', '0.0.0.0', '[::]'] else openbao_listener_host }}:{{ openbao_listener_port }}
+
+# Post-init writes once per cluster, on the first member in the play; on every host otherwise
+openbao_configure_here: >-
+  {{ openbao_cluster_group == ''
+     or inventory_hostname == (openbao_cluster_members | select('in', ansible_play_hosts) | first) }}
+
+openbao_file_audit_paths: >-
+  {{ openbao_audit_devices | selectattr('type', 'equalto', 'file') | map(attribute='options')
+     | map(attribute='file_path') | reject('in', ['stdout', 'discard']) | list }}
+
+# api_objects.yml: the keys of the wanted data that differ from what the API reads back (a mapping one level deep)
+openbao_object_diff_keys: >-
+  {%- set out = [] -%}
+  {%- for k, v in (item.item.data | default({})).items() if k in openbao_object_have -%}
+  {%- set h = openbao_object_have[k] -%}
+  {%- if v is mapping and h is mapping -%}
+  {%- for k2, v2 in v.items() if h[k2] | default(none) != v2 -%}{%- set _ = out.append(k ~ '.' ~ k2) -%}{%- endfor -%}
+  {%- elif h != v -%}{%- set _ = out.append(k) -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ out }}
+openbao_object_diff: "{{ openbao_object_diff_keys | length > 0 }}"
+
+# configure.yml: mounts with paths without a trailing slash and a state
+openbao_engines_norm: >-
+  {%- set out = [] -%}
+  {%- for m in openbao_secrets_engines -%}
+  {%- set _ = out.append(m | combine({'path': m.path | regex_replace('/+$', ''), 'state': m.state | default('present')})) -%}
+  {%- endfor -%}
+  {{ out }}
+openbao_auth_norm: >-
+  {%- set out = [] -%}
+  {%- for m in openbao_auth_methods -%}
+  {%- set _ = out.append(m | combine({'path': m.path | regex_replace('/+$', ''), 'state': m.state | default('present')})) -%}
+  {%- endfor -%}
+  {{ out }}
+
+# Transit: the key with its create-time fields (never rewritten), then its config; absent: deletion allowed, then deleted
+openbao_transit_create_fields: [derived, convergent_encryption, key_size]
+openbao_transit_config_fields: [deletion_allowed, exportable, allow_plaintext_backup, auto_rotate_period, min_decryption_version, min_encryption_version]
+openbao_transit_objects: >-
+  {%- set out = [] -%}
+  {%- for k in openbao_transit_keys -%}
+  {%- set key = k.mount | regex_replace('/+$', '') ~ '/keys/' ~ k.name -%}
+  {%- if k.state | default('present') == 'absent' -%}
+  {%- set _ = out.append({'path': key ~ '/config', 'read_path': key, 'label': key ~ ' (deletion allowed)',
+                          'data': {'deletion_allowed': true}, 'update_only': true}) -%}
+  {%- set _ = out.append({'path': key, 'label': key, 'state': 'absent'}) -%}
+  {%- else -%}
+  {#- A filter, not a loop: a set inside a for loop does not outlive the loop -#}
+  {%- set create = {'type': k.type | default('aes256-gcm96')}
+                   | combine(k | dict2items | selectattr('key', 'in', openbao_transit_create_fields) | items2dict) -%}
+  {%- set _ = out.append({'path': key, 'label': key, 'create_only': true, 'data': create}) -%}
+  {%- set config = k | dict2items | selectattr('key', 'in', openbao_transit_config_fields) | items2dict -%}
+  {%- if config | length > 0 -%}
+  {%- set _ = out.append({'path': key ~ '/config', 'read_path': key, 'label': key ~ ' (config)', 'data': config}) -%}
+  {%- endif -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ out }}
+
+# Snapshots: wanted by this host, or in a cluster by any member in the play
+openbao_backup_wanted: >-
+  {{ (openbao_cluster_members | select('in', ansible_play_hosts) | map('extract', hostvars, 'openbao_node_backup_enabled')
+      | select('equalto', true) | list | length > 0)
+     if openbao_cluster_group | length > 0 else openbao_backup_enabled }}
+openbao_backup_policy:
+  - name: openbao-snapshot
+    rules: |
+      path "sys/storage/raft/snapshot" { capabilities = ["read"] }
+openbao_backup_token_role:
+  - name: openbao-snapshot
+    allowed_policies: [openbao-snapshot]
+    token_period: "{{ openbao_backup_token_period | int }}"
+    orphan: true
+    renewable: true

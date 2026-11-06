@@ -1,0 +1,90 @@
+---
+# Before any install: a wrong checksum stops the run with nothing installed
+- name: Is OpenBao already installed, at which version (check mode tolerates only what a fresh host lacks)
+  ansible.builtin.command:
+    argv: "{{ openbao_query[ansible_facts['os_family']] }}"
+  vars:
+    openbao_query:
+      Debian: [dpkg-query, -W, -f, '${db:Status-Status} ${Version}', openbao]
+      RedHat: [rpm, -q, --qf, 'installed %{VERSION}', openbao]
+  register: openbao_pkg_query
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Remember it
+  ansible.builtin.set_fact:
+    openbao_present: "{{ openbao_pkg_query.stdout is match('^installed ') }}"
+    openbao_installed_version: "{{ openbao_pkg_query.stdout.split(' ')[1] if openbao_pkg_query.stdout is match('^installed ') else '' }}"
+    # Check mode on a host without OpenBao: skip what needs the package, its user or its directories
+    openbao_fresh_check: "{{ ansible_check_mode and openbao_pkg_query.stdout is not match('^installed ') }}"
+
+- name: Assert no downgrade (restore a snapshot taken under the older version instead)
+  ansible.builtin.assert:
+    that: not openbao_present or openbao_installed_version is version(openbao_version, '<=')
+    fail_msg: "OpenBao {{ openbao_installed_version }} is installed: the role never downgrades to {{ openbao_version }}"
+    quiet: true
+
+- name: Download cache (plugins, repository key)
+  ansible.builtin.file:
+    path: "{{ openbao_plugin_cache }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Download each plugin archive, checksum checked
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}-{{ item.checksum[:16] }}.tar.gz"
+    checksum: "sha256:{{ item.checksum }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ openbao_plugins }}"
+  loop_control:
+    label: "{{ item.type }}/{{ item.name }} {{ item.version }}"
+  when: not openbao_fresh_check
+
+- name: One directory per plugin version
+  ansible.builtin.file:
+    path: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}-{{ item.checksum[:16] }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop: "{{ openbao_plugins }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.version }}"
+
+- name: Unpack each plugin archive
+  ansible.builtin.unarchive:
+    src: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}-{{ item.checksum[:16] }}.tar.gz"
+    dest: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}-{{ item.checksum[:16] }}"
+    remote_src: true
+    include: ["{{ item.binary }}"]
+    creates: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}-{{ item.checksum[:16] }}/{{ item.binary }}"
+  loop: "{{ openbao_plugins }}"
+  loop_control:
+    label: "{{ item.type }}/{{ item.name }} {{ item.version }}"
+  when: not ansible_check_mode
+
+- name: Read each unpacked binary's checksum
+  ansible.builtin.stat:
+    path: "{{ openbao_plugin_cache }}/{{ item.name }}-{{ item.version }}-{{ item.checksum[:16] }}/{{ item.binary }}"
+    checksum_algorithm: sha256
+  loop: "{{ openbao_plugins }}"
+  loop_control:
+    label: "{{ item.binary }}"
+  register: openbao_plugin_binaries
+  when: not ansible_check_mode
+
+- name: Assert each binary is the expected one
+  ansible.builtin.assert:
+    that: item.stat.checksum | default('') == item.item.binary_sha256
+    fail_msg: "{{ item.item.binary }}: sha256 {{ item.stat.checksum | default('missing') }}, expected {{ item.item.binary_sha256 }}"
+    quiet: true
+  loop: "{{ openbao_plugin_binaries.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.binary }}"
+  when: not ansible_check_mode

@@ -1,0 +1,416 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: true
+  vars:
+    molecule_bao: . /etc/openbao/client.env && bao
+  tasks:
+    # --- install, files, environment ---
+    - name: OpenBao runs at the pinned version, held
+      ansible.builtin.shell: |
+        set -o pipefail
+        systemctl is-active openbao
+        if [ {{ molecule_el | ternary('el', 'deb') }} = deb ]; then
+          dpkg-query -W -f '${Version}' openbao | grep -qx 2.7.2
+          apt-mark showhold | grep -qx openbao
+        else
+          test "$(rpm -q --qf '%{VERSION}' openbao)" = 2.7.2
+          dnf versionlock list openbao | grep -q '^openbao-0:2.7.2-'
+          ! dnf versionlock list openbao | grep -q '^openbao-0:2.7.1-'
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: The first converge started OpenBao once (one HSM login), not start then restart
+      ansible.builtin.shell: |
+        set -o pipefail
+        # The id of the systemd "unit started" message: its text differs between systemd versions
+        journalctl -u openbao --no-pager -o cat MESSAGE_ID=39f53479d3a045ac8e11786248231fbf | wc -l
+      args:
+        executable: /bin/bash
+      register: molecule_starts
+      changed_when: false
+      failed_when: molecule_starts.stdout != '1'
+
+    - name: Secret and config files have their owners and modes
+      ansible.builtin.command: stat -c '%n %U:%G %a' /etc/openbao/openbao.env /etc/openbao/openbao.hcl /opt/openbao/tls/tls.key
+      register: molecule_stat
+      changed_when: false
+      failed_when: >-
+        molecule_stat.stdout_lines != ['/etc/openbao/openbao.env root:root 400', '/etc/openbao/openbao.hcl root:openbao 640',
+        '/opt/openbao/tls/tls.key openbao:openbao 600']
+
+    - name: The certificate carries the default and the given names
+      ansible.builtin.shell: |
+        set -o pipefail
+        openssl x509 -in /opt/openbao/tls/tls.crt -noout -ext subjectAltName | tr -d ' \n'
+      args:
+        executable: /bin/bash
+      register: molecule_san
+      changed_when: false
+      failed_when: molecule_san.stdout != 'X509v3SubjectAlternativeName:IPAddress:127.0.0.1,DNS:localhost,DNS:openbao.example.org,IPAddress:192.0.2.10'
+
+    - name: The restart policy and its limits are applied
+      ansible.builtin.command: systemctl show openbao -p Restart -p StartLimitBurst -p StartLimitIntervalUSec  # noqa: command-instead-of-module
+      register: molecule_unit
+      changed_when: false
+      failed_when: molecule_unit.stdout_lines | sort != ['Restart=no', 'StartLimitBurst=3', 'StartLimitIntervalUSec=2min']
+
+    - name: A non-root user reads the CA and reaches the API with client.env
+      ansible.builtin.shell: |
+        set -o pipefail
+        # bao status exits 2 while not initialized: the JSON is the proof, not the exit code
+        out=$(runuser -u nobody -- bash -c '. /etc/openbao/client.env && bao status -format=json' 2>&1 || true)
+        grep -q '"initialized"' <<< "$out" || { echo "$out"; exit 1; }
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: The environment reaches the server unchanged
+      ansible.builtin.shell: |
+        set -o pipefail
+        tr '\0' '\n' < /proc/$(systemctl show -p MainPID --value openbao)/environ | grep '^MOLECULE_QUOTED='
+      args:
+        executable: /bin/bash
+      register: molecule_env
+      changed_when: false
+      failed_when: molecule_env.stdout != 'MOLECULE_QUOTED=a "b" $c \d'
+
+    # --- after converge's init (3 recovery shares, threshold 2) and post-init ---
+    - name: Read the test instance's root token (converge kept it, test only)
+      ansible.builtin.slurp:
+        src: /root/molecule-init.json
+      register: molecule_init
+      no_log: true
+
+    - name: Root token of the test instance
+      ansible.builtin.set_fact:
+        molecule_root: "{{ (molecule_init.content | b64decode | from_json).root_token }}"
+      no_log: true
+
+    - name: Unsealed by the seal, recovery 3 of 2
+      ansible.builtin.shell: >-
+        {{ molecule_bao }} status -format=json
+      args:
+        executable: /bin/bash
+      register: molecule_status
+      changed_when: false
+      retries: 15
+      delay: 2
+      until: not (molecule_status.stdout | from_json).sealed
+      failed_when: >-
+        (molecule_status.stdout | from_json).type != 'pkcs11'
+        or (molecule_status.stdout | from_json).n != 3 or (molecule_status.stdout | from_json).t != 2
+
+    - name: The raft cluster port listens on loopback only (raft runs once initialized)
+      ansible.builtin.shell: |
+        set -o pipefail
+        ss -Hltn 'sport = :8201' | awk '{print $4}'
+      args:
+        executable: /bin/bash
+      register: molecule_cluster
+      changed_when: false
+      failed_when: molecule_cluster.stdout_lines != ['127.0.0.1:8201']
+
+    - name: The post-init part refuses to run without a root token
+      block:
+        - name: Run it without a token
+          ansible.builtin.include_role:
+            name: ../../../../ansible-role-openbao
+            tasks_from: configure
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: configure ran without a root token
+      rescue:
+        - name: It stopped on the token check
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Assert a root token is given at run time'
+
+    - name: A wanted path mounted with another type is refused
+      block:
+        - name: Ask for kv/ as a transit engine
+          ansible.builtin.include_role:
+            name: ../../../../ansible-role-openbao
+            tasks_from: configure
+          vars:
+            openbao_root_token: "{{ molecule_root }}"
+            openbao_secrets_engines: [{path: kv, type: transit}]
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: configure accepted a mount of another type
+      rescue:
+        - name: It stopped on the type check
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Assert an existing path has the wanted type'
+
+    # --- the periodic token: transit encrypt and decrypt, nothing else ---
+    - name: A token from the role, by the token script
+      ansible.builtin.command: openbao-token-create autounseal
+      environment:
+        BAO_TOKEN: "{{ molecule_root }}"
+      register: molecule_token
+      changed_when: true
+      no_log: true
+
+    - name: The token is periodic, orphan, with the role's policy
+      ansible.builtin.shell: >-
+        {{ molecule_bao }} token lookup -format=json
+      args:
+        executable: /bin/bash
+      environment:
+        BAO_TOKEN: "{{ molecule_token.stdout }}"
+      register: molecule_lookup
+      changed_when: false
+      no_log: true
+
+    # A role's token_period makes the lease periodic; lookup shows no "period" for it (token_store.go)
+    - name: Renew the token
+      ansible.builtin.shell: >-
+        {{ molecule_bao }} token renew -format=json
+      args:
+        executable: /bin/bash
+      environment:
+        BAO_TOKEN: "{{ molecule_token.stdout }}"
+      register: molecule_renew
+      changed_when: false
+      no_log: true
+
+    - name: Check the token's properties
+      ansible.builtin.assert:
+        that:
+          - (molecule_lookup.stdout | from_json).data.creation_ttl == 86400
+          - (molecule_lookup.stdout | from_json).data.explicit_max_ttl == 0
+          - (molecule_lookup.stdout | from_json).data.orphan
+          - (molecule_lookup.stdout | from_json).data.role == 'autounseal'
+          - (molecule_lookup.stdout | from_json).data.policies | sort == ['autounseal', 'default']
+          - (molecule_renew.stdout | from_json).auth.lease_duration == 86400
+          - (molecule_renew.stdout | from_json).auth.renewable
+
+    - name: Transit encrypt then decrypt with that token
+      ansible.builtin.shell: |
+        set -o pipefail
+        . /etc/openbao/client.env
+        c=$(bao write -field=ciphertext transit/encrypt/autounseal plaintext=$(printf molecule | base64))
+        bao write -field=plaintext transit/decrypt/autounseal ciphertext="$c" | base64 -d
+      args:
+        executable: /bin/bash
+      environment:
+        BAO_TOKEN: "{{ molecule_token.stdout }}"
+      register: molecule_roundtrip
+      changed_when: false
+      failed_when: molecule_roundtrip.stdout != 'molecule'
+      no_log: true
+
+    - name: The token cannot read anything else
+      ansible.builtin.shell: >-
+        {{ molecule_bao }} secrets list
+      args:
+        executable: /bin/bash
+      environment:
+        BAO_TOKEN: "{{ molecule_token.stdout }}"
+      register: molecule_denied
+      changed_when: false
+      failed_when: molecule_denied.rc == 0 or 'permission denied' not in molecule_denied.stderr
+      no_log: true
+
+    # --- server settings: listener, telemetry, logs, audit ---
+    - name: TLS 1.2 is refused, TLS 1.3 accepted
+      ansible.builtin.shell: |
+        set -o pipefail
+        ! openssl s_client -connect 127.0.0.1:8200 -tls1_2 < /dev/null > /dev/null 2>&1
+        openssl s_client -connect 127.0.0.1:8200 -tls1_3 < /dev/null 2>&1 | grep -q 'TLSv1.3'
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Prometheus metrics without a token
+      ansible.builtin.uri:
+        url: https://127.0.0.1:8200/v1/sys/metrics?format=prometheus
+        ca_path: /opt/openbao/tls/tls.crt
+        return_content: true
+      register: molecule_metrics
+      failed_when: molecule_metrics.status != 200 or 'core_unsealed' not in molecule_metrics.content
+
+    - name: The server logs JSON
+      ansible.builtin.shell: |
+        set -o pipefail
+        # Read the journal whole first: grep -m1 closing the pipe early is a SIGPIPE under pipefail
+        log=$(journalctl -u openbao --no-pager -o cat)
+        grep '^{' <<< "$log" | tail -n 1 | python3 -c 'import json,sys; json.load(sys.stdin)'
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: The file audit device logs requests, rotated by logrotate
+      ansible.builtin.shell: |
+        set -o pipefail
+        test "$(stat -c '%U' /var/log/openbao/audit.log)" = openbao
+        grep -q '"type":"request"' /var/log/openbao/audit.log
+        logrotate --debug /etc/logrotate.d/openbao 2>&1 | grep -q 'audit.log'
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    # --- post-init options, read back ---
+    - name: Read back the tuned mounts, the roles and the keys
+      ansible.builtin.uri:
+        url: https://127.0.0.1:8200/v1/{{ item }}
+        ca_path: /opt/openbao/tls/tls.crt
+        headers: {X-Vault-Token: "{{ molecule_root }}"}
+      loop:
+        - sys/mounts/kv/tune
+        - sys/auth/approle/tune
+        - auth/approle/role/app
+        - auth/token/roles/short
+        - transit/keys/rotating
+      register: molecule_reads
+      no_log: true
+
+    - name: Check what was read back
+      ansible.builtin.assert:
+        that:
+          - molecule_reads.results[0].json.data.options.version == '2'
+          - molecule_reads.results[0].json.data.max_lease_ttl == 7200
+          - molecule_reads.results[1].json.data.default_lease_ttl == 3600
+          - molecule_reads.results[2].json.data.token_ttl == 1800
+          - molecule_reads.results[2].json.data.token_policies == ['autounseal']
+          - molecule_reads.results[3].json.data.token_explicit_max_ttl == 600
+          - molecule_reads.results[3].json.data.token_bound_cidrs == ['127.0.0.1']
+          - molecule_reads.results[4].json.data.auto_rotate_period == 2592000
+
+    # --- create, change, then remove: every kind of object, state absent ---
+    - name: Create the scratch objects
+      ansible.builtin.include_role:
+        name: ../../../../ansible-role-openbao
+        tasks_from: configure
+      vars: &molecule_scratch
+        openbao_root_token: "{{ molecule_root }}"
+        openbao_backup_enabled: false
+        openbao_secrets_engines: [{path: scratch, type: kv, config: {max_lease_ttl: "{{ molecule_scratch_ttl | default(3600) | int }}"}}]
+        openbao_auth_methods: [{path: scratch-up, type: userpass}]
+        openbao_transit_keys: [{mount: transit, name: scratch}]
+        openbao_policies:
+          - {name: scratch, rules: "path \"kv/data/scratch-{{ molecule_scratch_ttl | default(3600) }}\" { capabilities = [\"read\"] }\n"}
+        openbao_token_roles: [{name: scratch, allowed_policies: [scratch], token_explicit_max_ttl: "{{ molecule_scratch_ttl | default(3600) | int }}"}]
+        openbao_api_resources:
+          - {path: auth/scratch-up/users/u1, data: {password: not-read-back, token_ttl: "{{ molecule_scratch_ttl | default(3600) | int }}"}}
+
+    - name: The new values
+      ansible.builtin.set_fact:
+        molecule_scratch_ttl: 7200
+
+    - name: Change them
+      ansible.builtin.include_role:
+        name: ../../../../ansible-role-openbao
+        tasks_from: configure
+      vars: *molecule_scratch
+
+    - name: Read back the changed scratch objects
+      ansible.builtin.uri:
+        url: https://127.0.0.1:8200/v1/{{ item }}
+        ca_path: /opt/openbao/tls/tls.crt
+        headers: {X-Vault-Token: "{{ molecule_root }}"}
+      loop: [sys/mounts/scratch/tune, sys/policies/acl/scratch, auth/token/roles/scratch, auth/scratch-up/users/u1]
+      register: molecule_scratch_reads
+      no_log: true
+
+    - name: Every change was applied
+      ansible.builtin.assert:
+        that:
+          - molecule_scratch_reads.results[0].json.data.max_lease_ttl == 7200
+          - "'scratch-7200' in molecule_scratch_reads.results[1].json.data.policy"
+          - molecule_scratch_reads.results[2].json.data.token_explicit_max_ttl == 7200
+          - molecule_scratch_reads.results[3].json.data.token_ttl == 7200
+
+    - name: A create-only field cannot change
+      block:
+        - name: Ask for the scratch key as another type
+          ansible.builtin.include_role:
+            name: ../../../../ansible-role-openbao
+            tasks_from: configure
+          vars:
+            openbao_root_token: "{{ molecule_root }}"
+            openbao_backup_enabled: false
+            openbao_secrets_engines: []
+            openbao_transit_keys: [{mount: transit, name: scratch, type: ed25519}]
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: configure changed the type of an existing key
+      rescue:
+        - name: It stopped on the create-only check
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name is match('Assert nothing create-only differs')
+              - "'type' in ansible_failed_result.results | selectattr('failed', 'defined') | selectattr('failed') | map(attribute='msg') | join"
+
+    - name: Remove them all
+      ansible.builtin.include_role:
+        name: ../../../../ansible-role-openbao
+        tasks_from: configure
+      vars:
+        openbao_root_token: "{{ molecule_root }}"
+        openbao_backup_enabled: false
+        openbao_secrets_engines: [{path: scratch, type: kv, state: absent}]
+        openbao_auth_methods: [{path: scratch-up, type: userpass, state: absent}]
+        openbao_transit_keys: [{mount: transit, name: scratch, state: absent}]
+        openbao_policies: [{name: scratch, state: absent}]
+        openbao_token_roles: [{name: scratch, state: absent}]
+        openbao_api_resources: []
+
+    - name: Read the removed objects
+      ansible.builtin.uri:
+        url: https://127.0.0.1:8200/v1/{{ item }}
+        ca_path: /opt/openbao/tls/tls.crt
+        headers: {X-Vault-Token: "{{ molecule_root }}"}
+        status_code: [200, 404]
+      loop: [sys/mounts, sys/auth, transit/keys/scratch, sys/policies/acl/scratch, auth/token/roles/scratch]
+      register: molecule_removed
+      no_log: true
+
+    - name: All gone, the rest kept
+      ansible.builtin.assert:
+        that:
+          - "'scratch/' not in molecule_removed.results[0].json.data"
+          - "'kv/' in molecule_removed.results[0].json.data"
+          - "'scratch-up/' not in molecule_removed.results[1].json.data"
+          - "'approle/' in molecule_removed.results[1].json.data"
+          - molecule_removed.results[2:] | map(attribute='status') | list == [404, 404, 404]
+
+    # --- raft snapshots ---
+    - name: Snapshot token root-only, timer enabled
+      ansible.builtin.shell: |
+        set -o pipefail
+        test "$(stat -c '%U:%G %a' /etc/openbao/backup.token)" = 'root:root 400'
+        systemctl is-enabled --quiet openbao-snapshot.timer
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Three snapshots, the newest two kept
+      ansible.builtin.shell: |
+        set -o pipefail
+        for i in 1 2 3; do systemctl start openbao-snapshot.service; sleep 1; done
+        find /var/backups/openbao -name 'openbao-*.snap' -size +0 | wc -l
+      args:
+        executable: /bin/bash
+      register: molecule_snaps
+      changed_when: true
+      failed_when: molecule_snaps.stdout != '2'
+
+    # --- auto-unseal after a restart ---
+    - name: Restart OpenBao
+      ansible.builtin.systemd_service:
+        name: openbao
+        state: restarted
+
+    - name: Unsealed again by the seal alone
+      ansible.builtin.shell: >-
+        {{ molecule_bao }} status -format=json
+      args:
+        executable: /bin/bash
+      register: molecule_status
+      changed_when: false
+      retries: 15
+      delay: 2
+      until: molecule_status.rc == 0 and not (molecule_status.stdout | from_json).sealed

@@ -1,0 +1,45 @@
+---
+- name: Keyring directory
+  ansible.builtin.file:
+    path: "{{ openbao_apt_keyring | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the checked key for apt
+  ansible.builtin.copy:
+    src: "{{ openbao_gpg_key_cached }}"
+    dest: "{{ openbao_apt_keyring }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  when: not openbao_fresh_check
+
+- name: OpenBao apt repository
+  ansible.builtin.deb822_repository:
+    name: openbao
+    types: [deb]
+    uris: ["{{ openbao_apt_repo_url }}"]
+    suites: [stable]
+    components: [main]
+    signed_by: "{{ openbao_apt_keyring }}"
+  register: openbao_apt_repo
+  when: not openbao_fresh_check
+
+- name: Install the extra packages and OpenBao {{ openbao_version }}
+  ansible.builtin.apt:
+    name: "{{ ['openbao=' ~ openbao_version] + openbao_packages_extra + (['polkitd'] if openbao_pcsc_access else []) }}"
+    state: present
+    update_cache: "{{ openbao_apt_repo is changed }}"
+    # The package is held: a new openbao_version is the upgrade
+    allow_change_held_packages: true
+    allow_downgrade: false
+  when: not openbao_fresh_check
+
+- name: Hold the OpenBao version (an upgrade is a change of openbao_version)
+  ansible.builtin.dpkg_selections:
+    name: openbao
+    selection: hold
+  when: not openbao_fresh_check

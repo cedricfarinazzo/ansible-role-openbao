@@ -1,0 +1,83 @@
+---
+- name: Package lists (Debian family)
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Tools for the key check, the package and the certificate
+  ansible.builtin.package:
+    name: "{{ openbao_install_tools[ansible_facts['os_family']] }}"
+    state: present
+  vars:
+    openbao_install_tools:
+      Debian: [gnupg, ca-certificates, python3-debian, python3-cryptography]
+      RedHat: [gnupg2, ca-certificates, python3-cryptography, python3-dnf-plugin-versionlock]
+
+- name: Download the OpenBao signing key
+  ansible.builtin.get_url:
+    url: "{{ openbao_gpg_key_url }}"
+    dest: "{{ openbao_gpg_key_cached }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: not openbao_fresh_check
+
+- name: Read the key's fingerprint
+  ansible.builtin.command:
+    argv: [gpg, --show-keys, --with-colons, "{{ openbao_gpg_key_cached }}"]
+  register: openbao_gpg_key_show
+  changed_when: false
+  check_mode: false
+  when: not openbao_fresh_check
+
+- name: Assert the key is the expected one
+  ansible.builtin.assert:
+    # One primary key only; gpg prints its fingerprint on the first fpr line, right after pub
+    that:
+      - openbao_gpg_key_show.stdout_lines | select('match', '^pub:') | list | length == 1
+      - (openbao_gpg_key_show.stdout_lines | select('match', '^fpr:') | first) == 'fpr:::::::::' ~ openbao_gpg_key_fingerprint ~ ':'
+    fail_msg: "The key at {{ openbao_gpg_key_url }} is not {{ openbao_gpg_key_fingerprint }} alone: nothing installed"
+    quiet: true
+  when: not openbao_fresh_check
+
+- name: Install the package for the family {{ ansible_facts['os_family'] }}
+  ansible.builtin.include_tasks: install-{{ ansible_facts['os_family'] }}.yml
+
+- name: Extra groups for the openbao user
+  ansible.builtin.user:
+    name: openbao
+    groups: "{{ openbao_user_groups }}"
+    append: true
+  when:
+    - openbao_user_groups | length > 0
+    - not openbao_fresh_check
+  register: openbao_changed_groups
+  notify: Restart OpenBao
+
+- name: Let the openbao user reach pcscd
+  ansible.builtin.copy:
+    dest: /etc/polkit-1/rules.d/60-openbao-pcsc.rules
+    content: |
+      // Managed by Ansible: OpenBao's seal talks to the card through pcscd
+      polkit.addRule(function(action, subject) {
+        if ((action.id == "org.debian.pcsc-lite.access_pcsc" ||
+             action.id == "org.debian.pcsc-lite.access_card") &&
+            subject.user == "openbao") {
+          return polkit.Result.YES;
+        }
+      });
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - openbao_pcsc_access
+    - not openbao_fresh_check
+
+# A restart handler only for a service already running: a first start is one start (one HSM login), not two
+- name: Is OpenBao running before this run
+  ansible.builtin.systemd_service:
+    name: openbao
+  register: openbao_active_before
+  failed_when: false
+  check_mode: false
