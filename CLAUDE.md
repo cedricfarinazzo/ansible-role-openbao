@@ -21,7 +21,7 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 - `run-tests.sh` / `Makefile` — local Molecule entry points (`-s cluster` for the cluster scenario); several distros run in parallel, one log each in `.molecule-logs/<scenario>-<distro>.log`.
 - `requirements.yml` — collections the role needs at runtime (consumer ranges); `requirements-dev.txt` — controller tooling, exact pins; `molecule/default/collections.yml` — test pins.
 - `package.json`, `bun.lock`, `.releaserc.json` — semantic-release tooling only.
-- `.github/workflows/` — `ci.yml` (lint, shellcheck, Molecule matrix, cluster job), `pr-title.yml`, `release.yml` (semantic-release after `ci.yml` passes on `main`).
+- `.github/workflows/` — `ci.yml` (lint, shellcheck, Molecule matrix, cluster job; also started by `plugin-sums`), `pr-title.yml`, `release.yml` (semantic-release after `ci.yml` passes on `main`), `plugin-sums.yml` (a pull request changing `molecule/default/molecule.yml`: `.github/scripts/plugin-sums.sh` recomputes the kms-pkcs11 archive and binary sums of `molecule_plugin_version`, each archive checked against the release's checksums file; a change is committed to the pull request, then `ci.yml` is started on it, since a push with `GITHUB_TOKEN` starts no workflow).
 
 ## Conventions
 
@@ -35,7 +35,7 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 - **Secrets never logged or stored:** the env file task and every task carrying the root token have `no_log`; the role never runs `bao operator init` (its output stays with the operator).
 - **Examples never copy a real deployment:** documentation addresses (192.0.2.0/24, 198.51.100.0/24) and made-up names.
 - **GitHub Actions pinned by full commit SHA**, tag in a trailing comment. **Exact pins for tooling**; ranges only in `requirements.yml`.
-- **A pinned upstream version in `defaults/`, `vars/` or `molecule/`** (an OpenBao, plugin or tool release the role installs or tests) carries a `# renovate: datasource=<datasource> depName=<name> [extractVersion=<regex>]` line right above it, or Renovate never sees it. Its bump is `fix(deps)` in `defaults/`/`vars/` (a patch release), `chore(deps)` in `molecule/` (no release, not automerged). A checksum pinned next to a version is updated by hand. `renovate.json` is identical in the ssh, power and openbao roles: change all three together.
+- **A pinned upstream version in `defaults/`, `vars/` or `molecule/`** (an OpenBao, plugin or tool release the role installs or tests) carries a `# renovate: datasource=<datasource> depName=<name> [extractVersion=<regex>]` line right above it, or Renovate never sees it. Its bump is `fix(deps)` in `defaults/`/`vars/` (a patch release), `chore(deps)` in `molecule/` (no release, not automerged). A checksum pinned next to a version is updated by hand, unless a CI job of the repository does it (openbao: `plugin-sums`). `renovate.json` is identical in the ssh, power and openbao roles: change all three together.
 - **License:** MIT.
 
 ## Supported platforms
@@ -51,7 +51,7 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 ## Gotchas
 
 - systemd `EnvironmentFile` expands no `$`: escaping `$` as `$$` reaches the process as `$$`. Only `\` and `"` are escaped inside the double quotes.
-- Molecule expands `$VAR` inside `molecule.yml`: a literal `$` in a test value is `$$` there.
+- Molecule expands `$VAR` inside `molecule.yml`: a literal `$` in a test value is `$$` there. A Renovate annotation there must not end its regex with `$`.
 - SoftHSM 2.6 does RSA-OAEP with SHA-1 only (`CKR_ARGUMENTS_BAD` on decrypt with SHA-256): the scenario sets `rsa_oaep_hash: sha1`; real HSMs keep the `sha256` default.
 - The `openbao` user reads the SoftHSM token only through the `softhsm` group (`openbao_user_groups`); otherwise `C_Initialize` fails with `CKR_GENERAL_ERROR`.
 - A token role's `token_period` makes the lease periodic, but `token lookup` shows no `period` for it (only for a `-period` given at creation): check `creation_ttl` and a renewal's `lease_duration` instead.

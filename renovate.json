@@ -56,7 +56,7 @@
       ],
       "automerge": false,
       "prBodyNotes": [
-        "Checksums pinned next to this version (archive and binary, per architecture) are not updated by Renovate: update them from the release before merging, or CI fails on the checksum check."
+        "Renovate does not update a checksum pinned next to this version. A repository with a checksum job commits it to this pull request (openbao: `plugin-sums`); otherwise update it by hand before merging."
       ]
     }
   ],
