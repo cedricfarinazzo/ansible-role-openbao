@@ -92,6 +92,11 @@ openbao_service_start: true
 openbao_service_restart: on-failure
 openbao_service_start_limit_interval_sec: 60
 openbao_service_start_limit_burst: 3
+# Extra units to start after (systemd After=, ordering only), e.g. [time-sync.target] on a host without a
+# hardware clock, with a sync-wait unit enabled, or the certificate is "not yet valid" until NTP steps the clock
+openbao_service_after: []
+# Extra units to start before (systemd Before=, ordering only), e.g. a service that needs OpenBao up
+openbao_service_before: []
 
 # Before each start or restart: an RSA-OAEP round trip on the seal's PKCS#11 key, as the openbao user with
 # the server environment (one PIN login). A failure stops the run before OpenBao retries the seal itself.

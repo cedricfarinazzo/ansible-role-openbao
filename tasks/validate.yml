@@ -48,11 +48,15 @@
       - openbao_service_restart in ['no', 'on-success', 'on-failure', 'on-abnormal', 'on-watchdog', 'on-abort', 'always']
       - openbao_service_start_limit_interval_sec is integer and openbao_service_start_limit_interval_sec >= 0
       - openbao_service_start_limit_burst is integer and openbao_service_start_limit_burst > 0
+      - openbao_service_after is sequence and openbao_service_after is not string
+      - openbao_service_after | select('match', '^[A-Za-z0-9:_.@-]+[.][a-z]+$') | list | length == openbao_service_after | length
+      - openbao_service_before is sequence and openbao_service_before is not string
+      - openbao_service_before | select('match', '^[A-Za-z0-9:_.@-]+[.][a-z]+$') | list | length == openbao_service_before | length
     fail_msg: >-
       openbao_api_addr is required (https://host:port), openbao_listener_address host:port, openbao_storage one
       backend, openbao_seal at most one seal, SANs IP:... or DNS:..., openbao_tls_valid_days a positive integer,
       openbao_service_start a boolean, openbao_service_restart a systemd Restart= value, the start limits integers,
-      the TLS and plugin paths absolute, openbao_tls_common_name set, openbao_addr https://host:port,
+      openbao_service_after and openbao_service_before lists of unit names, the TLS and plugin paths absolute, openbao_tls_common_name set, openbao_addr https://host:port,
       openbao_token_script a boolean, openbao_listener_options a mapping, openbao_listeners_extra a list of
       mappings, openbao_log_level trace/debug/info/warn/error, openbao_log_format standard/json, openbao_telemetry a mapping
     quiet: true

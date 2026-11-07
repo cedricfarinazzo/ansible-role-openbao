@@ -64,6 +64,14 @@
       changed_when: false
       failed_when: molecule_unit.stdout_lines | sort != ['Restart=no', 'StartLimitBurst=3', 'StartLimitIntervalUSec=2min']
 
+    - name: OpenBao starts after and before the units given
+      ansible.builtin.command: systemctl show openbao -p After -p Before  # noqa: command-instead-of-module
+      register: molecule_order
+      changed_when: false
+      failed_when: >-
+        'time-sync.target' not in (molecule_order.stdout_lines | select('match', '^After=') | first).split('=')[1].split()
+        or 'molecule-after-openbao.service' not in (molecule_order.stdout_lines | select('match', '^Before=') | first).split('=')[1].split()
+
     - name: A non-root user reads the CA and reaches the API with client.env
       ansible.builtin.shell: |
         set -o pipefail

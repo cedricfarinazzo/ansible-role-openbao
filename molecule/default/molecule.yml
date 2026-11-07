@@ -73,6 +73,8 @@ provisioner:
         # As for an HSM with a PIN retry counter: no automatic restart
         openbao_service_restart: "no"
         openbao_service_start_limit_interval_sec: 120
+        openbao_service_after: [time-sync.target]
+        openbao_service_before: [molecule-after-openbao.service]
         openbao_log_format: json
         openbao_listener_options:
           tls_min_version: tls13
