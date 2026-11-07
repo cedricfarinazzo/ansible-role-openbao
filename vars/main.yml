@@ -72,11 +72,17 @@ openbao_config_base:
   listener: "{{ [{'tcp': openbao_listener_tcp}] + openbao_listeners_extra }}"
   plugin_directory: "{{ openbao_plugin_directory }}"
 
+# One seal: its stanza. A migration: a list, the previous seal disabled first, then the new one (if any)
+openbao_seal_stanzas: >-
+  {{ openbao_seal if openbao_seal_previous | length == 0
+     else [{(openbao_seal_previous.keys() | first): (openbao_seal_previous.values() | first) | combine({'disabled': 'true'})}]
+          + ([openbao_seal] if openbao_seal | length > 0 else []) }}
+
 # JSON is valid OpenBao configuration, also in a .hcl file
 openbao_config: >-
   {{ openbao_config_base
      | combine({'plugin': openbao_plugin_stanzas | from_json} if openbao_plugins | length > 0 else {})
-     | combine({'seal': openbao_seal} if openbao_seal | length > 0 else {})
+     | combine({'seal': openbao_seal_stanzas} if openbao_seal_stanzas | length > 0 else {})
      | combine({'telemetry': openbao_telemetry} if openbao_telemetry | length > 0 else {})
      | combine({'audit': openbao_audit_stanzas | from_json} if openbao_audit_devices | length > 0 else {})
      | combine(openbao_config_extra, recursive=true) }}

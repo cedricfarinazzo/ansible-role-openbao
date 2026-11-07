@@ -25,6 +25,9 @@
       - openbao_listener_address is match('^[A-Za-z0-9.\[\]:-]*:[0-9]+$')
       - openbao_storage is mapping and openbao_storage | length == 1
       - openbao_seal is mapping and openbao_seal | length <= 1
+      - openbao_seal_previous is mapping and openbao_seal_previous | length <= 1
+      - openbao_seal_previous | length == 0 or (openbao_seal_previous.values() | first) is mapping
+      - openbao_seal_previous | length == 0 or openbao_seal_previous != openbao_seal
       - openbao_config_extra is mapping
       - openbao_ui is boolean
       - openbao_tls_self_signed is boolean
@@ -54,7 +57,7 @@
       - openbao_service_before | select('match', '^[A-Za-z0-9:_.@-]+[.][a-z]+$') | list | length == openbao_service_before | length
     fail_msg: >-
       openbao_api_addr is required (https://host:port), openbao_listener_address host:port, openbao_storage one
-      backend, openbao_seal at most one seal, SANs IP:... or DNS:..., openbao_tls_valid_days a positive integer,
+      backend, openbao_seal at most one seal, openbao_seal_previous at most one seal and not openbao_seal itself, SANs IP:... or DNS:..., openbao_tls_valid_days a positive integer,
       openbao_service_start a boolean, openbao_service_restart a systemd Restart= value, the start limits integers,
       openbao_service_after and openbao_service_before lists of unit names, the TLS and plugin paths absolute, openbao_tls_common_name set, openbao_addr https://host:port,
       openbao_token_script a boolean, openbao_listener_options a mapping, openbao_listeners_extra a list of
