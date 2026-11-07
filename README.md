@@ -330,6 +330,32 @@ Then `bao operator init -recovery-shares=5 -recovery-threshold=3`, then the post
 
 `bao operator init` on one node: the others join through `retry_join` and unseal through the seal. Run the post-init part on `hosts: bao`: it writes once.
 
+### Seal migration to a new HSM key
+
+Both tokens plugged in, each picked by its label, the new one with the same PIN as the old during the migration.
+
+```yaml
+# 1. Run the role with both seals: OpenBao restarts sealed in migration mode
+openbao_seal_previous:
+  pkcs11: {lib: /usr/lib/x86_64-linux-gnu/libykcs11.so, token_label: "YubiKey PIV #11111111",
+           key_id: "03", key_label: "Private key for Key Management", rsa_oaep_hash: sha256}
+openbao_seal:
+  pkcs11: {lib: /usr/lib/x86_64-linux-gnu/libykcs11.so, token_label: "YubiKey PIV #22222222",
+           key_id: "03", key_label: "Private key for Key Management", rsa_oaep_hash: sha256}
+```
+
+```bash
+# 2. The recovery keys, one per call, up to the threshold
+bao operator unseal -migrate      # prompts for a recovery key; repeat
+```
+
+```yaml
+# 3. Run the role again with the new seal alone, then remove the old token
+openbao_seal_previous: {}
+```
+
+The recovery keys stay the same. From Shamir to an auto seal: `openbao_seal_previous: {}` throughout and the unseal keys with `-migrate`; back to Shamir: `openbao_seal: {}` and the old seal as `openbao_seal_previous`.
+
 ### Prometheus metrics, JSON logs, TLS 1.3 only
 
 ```yaml
