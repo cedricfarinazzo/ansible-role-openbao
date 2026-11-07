@@ -1,0 +1,76 @@
+---
+# One node, two SoftHSM keys: init on key A, migrate to key B with the recovery keys, then key B alone
+dependency:
+  name: galaxy
+driver:
+  name: docker
+platforms:
+  - name: openbao-migration-${MOLECULE_DISTRO:-debian13}
+    hostname: openbao
+    image: "geerlingguy/docker-${MOLECULE_DISTRO:-debian13}-ansible:latest"
+    command: ${MOLECULE_DOCKER_COMMAND:-""}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+    pre_build_image: true
+provisioner:
+  name: ansible
+  playbooks:
+    prepare: prepare/playbook.yml
+    converge: converge/playbook.yml
+    verify: verify/playbook.yml
+  inventory:
+    group_vars:
+      all:
+        ansible_become: false
+        molecule_hsm_lib: /usr/lib/softhsm/libsofthsm2.so
+        molecule_hsm_pin: "2222"
+        molecule_plugin_arch: "{{ {'x86_64': 'amd64_v1', 'aarch64': 'arm64_v8'}[ansible_facts['architecture']] }}"
+        # renovate: datasource=github-releases depName=openbao/openbao-plugins extractVersion=^kms-pkcs11-(?<version>v.+)
+        molecule_plugin_version: v0.3.0
+        # Of that version: Renovate bumps the version only, update these with it by hand
+        molecule_plugin_sums:
+          amd64_v1:
+            archive: c112c670e1bcca7a7b7625b13c0ecf1a43a62cd2651d29bf23befb2ad47c49bf
+            binary: 96fefa80e721551725ea01be79b0dae0f3951f15f01291fd87846d5e45475be6
+          arm64_v8:
+            archive: 9485217db9f2797fec0c56037e64559cdef00e0a3a0c7cc34da6492f402e5d59
+            binary: 7654edf4f5438e0d798ef6f369526f99722c2c2cab3c83b741539e120348b213
+        # Two tokens of the same kind, as two HSM keys plugged in at once: each picked by its label, never a slot
+        molecule_seal_a:
+          pkcs11: {lib: "{{ molecule_hsm_lib }}", token_label: key-a, key_id: "03", key_label: seal, rsa_oaep_hash: sha1}
+        molecule_seal_b:
+          pkcs11: {lib: "{{ molecule_hsm_lib }}", token_label: key-b, key_id: "03", key_label: seal, rsa_oaep_hash: sha1}
+        openbao_api_addr: https://127.0.0.1:8200
+        openbao_listener_address: 127.0.0.1:8200
+        openbao_user_groups: [softhsm]
+        openbao_plugins:
+          - type: kms
+            name: pkcs11
+            version: "{{ molecule_plugin_version }}"
+            url: >-
+              https://github.com/openbao/openbao-plugins/releases/download/kms-pkcs11-{{ molecule_plugin_version }}/openbao-plugin-kms-pkcs11_linux_{{ molecule_plugin_arch }}.tar.gz
+            checksum: "{{ molecule_plugin_sums[molecule_plugin_arch].archive }}"
+            binary: openbao-plugin-kms-pkcs11_linux_{{ molecule_plugin_arch }}
+            binary_sha256: "{{ molecule_plugin_sums[molecule_plugin_arch].binary }}"
+        openbao_seal: "{{ molecule_seal_a }}"
+        # One PIN for both tokens: both seals read BAO_HSM_PIN
+        openbao_environment:
+          BAO_HSM_PIN: "{{ molecule_hsm_pin }}"
+        openbao_environment_required: [BAO_HSM_PIN]
+        openbao_pkcs11_oaep_check: true
+        openbao_service_restart: "no"
+verifier:
+  name: ansible
+scenario:
+  name: seal-migration
+  # No idempotence step: init and the migration happen once
+  test_sequence:
+    - dependency
+    - destroy
+    - create
+    - prepare
+    - converge
+    - verify
+    - destroy

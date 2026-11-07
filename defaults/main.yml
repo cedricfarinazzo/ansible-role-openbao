@@ -62,6 +62,10 @@ openbao_storage:
     node_id: "{{ inventory_hostname }}"
 # Seal stanza, e.g. {pkcs11: {lib: ..., slot: "0", key_id: "03"}}; {} = Shamir keys
 openbao_seal: {}
+# Seal migration: the seal being left, same shape as openbao_seal, written next to it with disabled = "true".
+# OpenBao then starts sealed in migration mode until `bao operator unseal -migrate` gets the recovery keys (the
+# unseal keys when leaving Shamir). Both seals must be reachable. Set it back to {} once migrated. {} = none
+openbao_seal_previous: {}
 openbao_ui: false
 # trace, debug, info, warn, error
 openbao_log_level: info

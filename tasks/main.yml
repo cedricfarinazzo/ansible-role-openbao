@@ -80,6 +80,15 @@
   register: openbao_seal_status
   when: openbao_service_start and not ansible_check_mode and openbao_seal | length > 0
 
+- name: Report a pending seal migration
+  ansible.builtin.debug:
+    msg: >-
+      Seal migration from {{ openbao_seal_previous.keys() | first }}: OpenBao is
+      {{ 'sealed in migration mode: give it the recovery keys with bao operator unseal -migrate'
+         if openbao_seal_status.json.sealed | default(true) else 'unsealed' }}; once migrated, set openbao_seal_previous
+      back to {} and run the role again
+  when: openbao_seal_previous | length > 0 and openbao_seal_status is not skipped
+
 - name: Assert the running seal is the configured one
   ansible.builtin.assert:
     that: openbao_seal_status.json.type == openbao_seal.keys() | first

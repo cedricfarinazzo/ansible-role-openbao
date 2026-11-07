@@ -1,0 +1,69 @@
+---
+- name: Verify the seal migration
+  hosts: all
+  tasks:
+    - name: Key B alone in the configuration
+      ansible.builtin.command: cat /etc/openbao/openbao.hcl
+      register: molecule_config
+      changed_when: false
+      failed_when: (molecule_config.stdout | from_json).seal != molecule_seal_b
+
+    # The same recovery keys authorise a root token under the new seal (CLI: token-gated generate-root)
+    - name: Two recovery keys still make a root token
+      ansible.builtin.shell: |
+        set -euo pipefail
+        . /etc/openbao/client.env
+        export BAO_TOKEN=$(python3 -c "import json; print(json.load(open('/root/molecule-init.json'))['root_token'])")
+        key() { python3 -c "import json; print(json.load(open('/root/molecule-init.json'))['recovery_keys_b64'][$1])"; }
+        init=$(bao operator generate-root -init -format=json)
+        nonce=$(jq -r .nonce <<<"$init"); otp=$(jq -r .otp <<<"$init")
+        bao operator generate-root -nonce="$nonce" -format=json "$(key 1)" >/dev/null
+        enc=$(bao operator generate-root -nonce="$nonce" -format=json "$(key 2)" | jq -r .encoded_token)
+        new=$(bao operator generate-root -decode="$enc" -otp="$otp")
+        BAO_TOKEN=$new bao token lookup -format=json | jq -e '.data.policies == ["root"]' >/dev/null
+        BAO_TOKEN=$new bao token revoke -self
+      args:
+        executable: /bin/bash
+      changed_when: false
+      no_log: true
+
+    # Test only: the configuration edited by hand, as if key B were gone; key A is still in its token
+    - name: Key A alone does not unseal
+      ansible.builtin.shell: |
+        set -euo pipefail
+        . /etc/openbao/client.env
+        cp /etc/openbao/openbao.hcl /root/openbao.hcl.b
+        python3 - <<'PY'
+        import json
+        p = '/etc/openbao/openbao.hcl'; c = json.load(open(p))
+        c['seal']['pkcs11']['token_label'] = 'key-a'
+        json.dump(c, open(p, 'w'))
+        PY
+        systemctl reset-failed openbao || true
+        systemctl restart openbao
+        for i in $(seq 15); do s=$(bao status -format=json 2>/dev/null || true); [ -n "$s" ] && break; sleep 2; done
+        sleep 6
+        # bao status exits 2 while sealed: the JSON is the proof, not the exit code
+        { bao status -format=json || true; } | jq -e '.sealed == true' >/dev/null
+        journalctl -u openbao -n 50 --no-pager | grep -q 'failed to unseal core'
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Key B unseals with token key-a deleted
+      ansible.builtin.shell: |
+        set -euo pipefail
+        . /etc/openbao/client.env
+        systemctl stop openbao
+        cp /root/openbao.hcl.b /etc/openbao/openbao.hcl
+        softhsm2-util --delete-token --token key-a >/dev/null
+        systemctl reset-failed openbao || true
+        systemctl start openbao
+        for i in $(seq 20); do
+          bao status -format=json 2>/dev/null | jq -e '.sealed == false' >/dev/null && exit 0
+          sleep 2
+        done
+        exit 1
+      args:
+        executable: /bin/bash
+      changed_when: false
