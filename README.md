@@ -83,6 +83,7 @@ amd64 and arm64: the packages and the openbao-plugins releases ship both.
 
 - **Enterprise Linux** has no official OpenBao repository (EPEL ships its own build). The role downloads the release RPM, verifies the signature of the release's `checksums.txt` with `gpgv` against the pinned key alone, then the RPM's sha256. It is tested with SELinux off (containers): an enforcing host may need a file context for `openbao_plugin_directory`.
 - **A PIV token (YubiKey, ykcs11)** gives the data object, the certificate and both keys of a slot the same `CKA_ID`: give `key_label` (the private key's label) with `key_id`, or the seal finds the certificate first. Debian's `pcscd` asks polkit: `openbao_pcsc_access: true` lets the `openbao` user in.
+- **A host without a hardware clock** (a Raspberry Pi): it boots with a stale time until NTP steps it, and its self-signed certificate is "not yet valid" until then. Set `openbao_service_after: [time-sync.target]` and enable a sync-wait unit on the host (`chrony-wait.service` or `systemd-time-wait-sync.service`); `fake-hwclock` keeps the boot time close.
 - **An HSM PIN with a retry counter** (a YubiKey locks after 3 wrong PINs): every automatic restart is a new login. Set `openbao_service_restart: "no"` and alert on the service; `openbao_pkcs11_oaep_check: true` tests the PIN before each start.
 - **Audit devices** live in the configuration: OpenBao refuses to create them through the API (`unsafe_allow_api_audit_creation` is off). Removing one from the list disables it.
 - **A cluster** restarts OpenBao on every member of the play at once on a configuration change: use `serial: 1` to roll it. All members need the same seal (the same HSM key, KMS key or static key).
@@ -172,6 +173,10 @@ openbao_service_restart: on-failure
 # They count manual starts too: a low burst refuses ordinary restarts
 openbao_service_start_limit_interval_sec: 60
 openbao_service_start_limit_burst: 3
+# Extra units to start after (After=, ordering only; nothing is pulled in), e.g. [time-sync.target]
+openbao_service_after: []
+# Extra units to start before (Before=, ordering only), e.g. a service that needs OpenBao up
+openbao_service_before: []
 # Before each start: an RSA-OAEP round trip on the seal's PKCS#11 key, as the openbao user, one PIN login.
 # Needs opensc and openbao_seal.pkcs11 with lib, key_id, slot or token_label. Skipped on a rerun with no change.
 openbao_pkcs11_oaep_check: false
