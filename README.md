@@ -84,6 +84,7 @@ amd64 and arm64: the packages and the openbao-plugins releases ship both.
 - **Enterprise Linux** has no official OpenBao repository (EPEL ships its own build). The role downloads the release RPM, verifies the signature of the release's `checksums.txt` with `gpgv` against the pinned key alone, then the RPM's sha256. It is tested with SELinux off (containers): an enforcing host may need a file context for `openbao_plugin_directory`.
 - **A PIV token (YubiKey, ykcs11)** gives the data object, the certificate and both keys of a slot the same `CKA_ID`: give `key_label` (the private key's label) with `key_id`, or the seal finds the certificate first. Debian's `pcscd` asks polkit: `openbao_pcsc_access: true` lets the `openbao` user in.
 - **A host without a hardware clock** (a Raspberry Pi): it boots with a stale time until NTP steps it, and its self-signed certificate is "not yet valid" until then. Set `openbao_service_after: [time-sync.target]` and enable a sync-wait unit on the host (`chrony-wait.service` or `systemd-time-wait-sync.service`); `fake-hwclock` keeps the boot time close.
+- **Seal migration** (a new HSM key, Shamir to auto-unseal, or back): set `openbao_seal` to the new seal and `openbao_seal_previous` to the old one, run the role; OpenBao restarts sealed in migration mode. Give it the recovery keys (the unseal keys when leaving Shamir) with `bao operator unseal -migrate`, one per call, up to the threshold. Then set `openbao_seal_previous: {}` and run the role again. Both seals must be reachable during the migration, so a lost key cannot be migrated from. Two keys on PKCS#11 tokens of the same kind: pick each one by `serial` or `token_label`, never `slot` (its number follows the plug order); both seals read `BAO_HSM_PIN`, so give the new token the same PIN for the migration. The recovery keys stay the same. Tested in `molecule/seal-migration`.
 - **An HSM PIN with a retry counter** (a YubiKey locks after 3 wrong PINs): every automatic restart is a new login. Set `openbao_service_restart: "no"` and alert on the service; `openbao_pkcs11_oaep_check: true` tests the PIN before each start.
 - **Audit devices** live in the configuration: OpenBao refuses to create them through the API (`unsafe_allow_api_audit_creation` is off). Removing one from the list disables it.
 - **A cluster** restarts OpenBao on every member of the play at once on a configuration change: use `serial: 1` to roll it. All members need the same seal (the same HSM key, KMS key or static key).
@@ -135,6 +136,8 @@ openbao_storage:                   # one backend
     node_id: "{{ inventory_hostname }}"
 # One seal stanza: {pkcs11: {...}}, {awskms: {...}}, {static: {...}}; {} = Shamir keys
 openbao_seal: {}
+# The seal being left during a migration (same shape), written disabled next to openbao_seal; {} = none
+openbao_seal_previous: {}
 openbao_ui: false
 openbao_log_level: info            # trace, debug, info, warn, error
 openbao_log_format: standard       # standard or json
@@ -326,6 +329,32 @@ Then `bao operator init -recovery-shares=5 -recovery-threshold=3`, then the post
 ```
 
 `bao operator init` on one node: the others join through `retry_join` and unseal through the seal. Run the post-init part on `hosts: bao`: it writes once.
+
+### Seal migration to a new HSM key
+
+Both tokens plugged in, each picked by its label, the new one with the same PIN as the old during the migration.
+
+```yaml
+# 1. Run the role with both seals: OpenBao restarts sealed in migration mode
+openbao_seal_previous:
+  pkcs11: {lib: /usr/lib/x86_64-linux-gnu/libykcs11.so, token_label: "YubiKey PIV #11111111",
+           key_id: "03", key_label: "Private key for Key Management", rsa_oaep_hash: sha256}
+openbao_seal:
+  pkcs11: {lib: /usr/lib/x86_64-linux-gnu/libykcs11.so, token_label: "YubiKey PIV #22222222",
+           key_id: "03", key_label: "Private key for Key Management", rsa_oaep_hash: sha256}
+```
+
+```bash
+# 2. The recovery keys, one per call, up to the threshold
+bao operator unseal -migrate      # prompts for a recovery key; repeat
+```
+
+```yaml
+# 3. Run the role again with the new seal alone, then remove the old token
+openbao_seal_previous: {}
+```
+
+The recovery keys stay the same. From Shamir to an auto seal: `openbao_seal_previous: {}` throughout and the unseal keys with `-migrate`; back to Shamir: `openbao_seal: {}` and the old seal as `openbao_seal_previous`.
 
 ### Prometheus metrics, JSON logs, TLS 1.3 only
 

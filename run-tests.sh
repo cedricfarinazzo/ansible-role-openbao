@@ -9,7 +9,8 @@ show_usage() {
     echo "Usage: $0 [-s SCENARIO] [DISTRO...] | all"
     echo
     echo "Run a Molecule scenario of the openbao role (default: the default scenario on debian13)."
-    echo "Scenarios: default (one node, SoftHSM seal), cluster (three raft nodes, static seal)."
+    echo "Scenarios: default (one node, SoftHSM seal), cluster (three raft nodes, static seal),"
+    echo "seal-migration (one node, key A to key B with the recovery keys; Debian family)."
     echo "Several distributions, or 'all', run in parallel; each writes .molecule-logs/<distro>.log."
     echo
     echo "Supported: ${SUPPORTED// /, }"

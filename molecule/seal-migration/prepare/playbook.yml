@@ -1,0 +1,32 @@
+---
+- name: Two stand-in HSM tokens, the same key id and label on each (as two PIV tokens)
+  hosts: all
+  tasks:
+    - name: Package lists
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: SoftHSM and the PKCS#11 tools
+      ansible.builtin.apt:
+        name: [softhsm2, opensc, jq]
+
+    - name: Tokens key-a and key-b, each with an RSA key pair (CKA_ID 03, label seal)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        for t in key-a key-b; do
+          softhsm2-util --init-token --free --label "$t" --so-pin 1111 --pin {{ molecule_hsm_pin }}
+          pkcs11-tool --module {{ molecule_hsm_lib }} --token-label "$t" --login --pin {{ molecule_hsm_pin }} \
+            --keypairgen --key-type rsa:2048 --id 03 --label seal
+        done
+        touch /var/lib/softhsm/tokens/.molecule-tokens
+      args:
+        executable: /bin/bash
+        creates: /var/lib/softhsm/tokens/.molecule-tokens
+
+    - name: The tokens are readable by their group (the role adds openbao to it)
+      ansible.builtin.file:
+        path: /var/lib/softhsm/tokens
+        recurse: true
+        group: softhsm
+        mode: u=rwX,g=rwX,o=

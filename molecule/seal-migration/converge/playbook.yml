@@ -1,0 +1,99 @@
+---
+- name: Key A, init
+  hosts: all
+  tasks:
+    - name: The role with key A
+      ansible.builtin.include_role:
+        name: ../../../../ansible-role-openbao
+
+    # Test only: the output is kept root-only so the steps below can use the recovery keys and the root token
+    - name: Initialize (3 recovery shares, threshold 2)
+      ansible.builtin.shell: |
+        set -o pipefail
+        umask 077
+        . /etc/openbao/client.env
+        bao operator init -recovery-shares=3 -recovery-threshold=2 -format=json > /root/molecule-init.json
+      args:
+        executable: /bin/bash
+        creates: /root/molecule-init.json
+      no_log: true
+
+    - name: Unsealed by key A
+      ansible.builtin.shell: . /etc/openbao/client.env && bao status -format=json
+      args:
+        executable: /bin/bash
+      register: molecule_status
+      changed_when: false
+      failed_when: false
+      retries: 15
+      delay: 2
+      until: molecule_status.rc == 0 and not (molecule_status.stdout | from_json).sealed
+
+- name: Migrate from key A to key B
+  hosts: all
+  tasks:
+    - name: The role with key B, key A as the previous seal
+      ansible.builtin.include_role:
+        name: ../../../../ansible-role-openbao
+      vars:
+        openbao_seal: "{{ molecule_seal_b }}"
+        openbao_seal_previous: "{{ molecule_seal_a }}"
+
+    - name: Both seals in the configuration, key A disabled
+      ansible.builtin.command: cat /etc/openbao/openbao.hcl
+      register: molecule_config
+      changed_when: false
+      failed_when: >-
+        (molecule_config.stdout | from_json).seal
+        != [{'pkcs11': molecule_seal_a.pkcs11 | combine({'disabled': 'true'})}, molecule_seal_b]
+
+    - name: Sealed in migration mode
+      ansible.builtin.shell: . /etc/openbao/client.env && bao status -format=json
+      args:
+        executable: /bin/bash
+      register: molecule_status
+      changed_when: false
+      failed_when: not ((molecule_status.stdout | from_json).sealed and (molecule_status.stdout | from_json).migration)
+
+    - name: Two recovery keys with -migrate
+      ansible.builtin.shell: |
+        set -o pipefail
+        . /etc/openbao/client.env
+        k=$(python3 -c "import json; print(json.load(open('/root/molecule-init.json'))['recovery_keys_b64'][{{ item }}])")
+        bao operator unseal -migrate "$k" >/dev/null
+      args:
+        executable: /bin/bash
+      loop: [0, 1]
+      changed_when: true
+      no_log: true
+
+    - name: Unsealed after the migration
+      ansible.builtin.shell: . /etc/openbao/client.env && bao status -format=json
+      args:
+        executable: /bin/bash
+      register: molecule_status
+      changed_when: false
+      failed_when: false
+      retries: 15
+      delay: 2
+      until: molecule_status.rc == 0 and not (molecule_status.stdout | from_json).sealed
+
+- name: Key B alone
+  hosts: all
+  tasks:
+    - name: The role with key B, no previous seal
+      ansible.builtin.include_role:
+        name: ../../../../ansible-role-openbao
+      vars:
+        openbao_seal: "{{ molecule_seal_b }}"
+
+    - name: Unsealed by key B
+      ansible.builtin.shell: . /etc/openbao/client.env && bao status -format=json
+      args:
+        executable: /bin/bash
+      register: molecule_status
+      changed_when: false
+      failed_when: false
+      retries: 15
+      delay: 2
+      until: molecule_status.rc == 0 and not (molecule_status.stdout | from_json).sealed
