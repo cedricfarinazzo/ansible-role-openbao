@@ -26,13 +26,17 @@
       - openbao_token_roles | reject('in', openbao_absent_items) | rejectattr('allowed_policies', 'defined') | list | length == 0
       - openbao_api_resources | rejectattr('path', 'defined') | list | length == 0
       - openbao_api_resources | reject('in', openbao_absent_items) | rejectattr('data', 'mapping') | list | length == 0
+      - openbao_api_resources | selectattr('create_only', 'defined') | rejectattr('create_only', 'boolean') | list | length == 0
+      - >-
+        openbao_api_resources | selectattr('read_path', 'defined') | map(attribute='read_path')
+        | reject('match', '^/*[A-Za-z0-9_.~-]+(/[A-Za-z0-9_.~-]+)*(\\?[A-Za-z0-9_.~=&-]*)?\\Z') | list | length == 0
       - >-
         (openbao_mount_lists + openbao_transit_keys + openbao_policies + openbao_token_roles + openbao_api_resources)
         | selectattr('state', 'defined') | rejectattr('state', 'in', ['present', 'absent']) | list | length == 0
     fail_msg: >-
       Engines and auth methods need path and type (config and options mappings, option values strings), transit keys
       mount and name, policies name and rules, token roles name and allowed_policies, API resources path and data
-      (a mapping); state is present or absent
+      (a mapping), create_only a boolean, read_path an API path (an optional query); state is present or absent
     quiet: true
   vars:
     openbao_mount_lists: "{{ openbao_secrets_engines + openbao_auth_methods }}"
@@ -53,6 +57,7 @@
         url: "{{ openbao_addr }}/v1/sys/health?standbyok=true"
         ca_path: "{{ openbao_tls_ca_file }}"
         status_code: 200
+      check_mode: false  # a read: check mode runs it too
 
     - name: Auth methods
       ansible.builtin.include_tasks: mounts.yml
@@ -106,8 +111,10 @@
         openbao_objects: >-
           {%- set out = [] -%}
           {%- for r in openbao_api_resources -%}
-          {%- set _ = out.append({'path': r.path | regex_replace('^/+', ''), 'label': r.path, 'state': r.state | default('present'),
-                                  'data': r.data | default({})}) -%}
+          {%- set o = {'path': r.path | regex_replace('^/+', ''), 'label': r.path, 'state': r.state | default('present'),
+                       'data': r.data | default({}), 'create_only': r.create_only | default(false)} -%}
+          {%- if r.read_path is defined -%}{%- set o = o | combine({'read_path': r.read_path | regex_replace('^/+', '')}) -%}{%- endif -%}
+          {%- set _ = out.append(o) -%}
           {%- endfor -%}
           {{ out }}
 
@@ -135,6 +142,7 @@
         status_code: [200, 403]
       register: openbao_backup_token_lookup
       when: openbao_backup_token_stat.stat.exists
+      check_mode: false  # a read: the next task needs its status
       no_log: true
 
     - name: Create a snapshot token
