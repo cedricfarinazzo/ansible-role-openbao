@@ -32,12 +32,12 @@
       - openbao_ui is boolean
       - openbao_tls_self_signed is boolean
       - openbao_tls_subject_alt_names is sequence and openbao_tls_subject_alt_names is not string
-      - openbao_tls_subject_alt_names | reject('match', '^(IP|DNS):[A-Za-z0-9.:*-]+$') | list | length == 0
+      - openbao_tls_subject_alt_names | reject('match', '^(IP|DNS):[A-Za-z0-9.:*-]+\Z') | list | length == 0
       - openbao_tls_valid_days is integer and openbao_tls_valid_days > 0
       - openbao_tls_common_name is string and openbao_tls_common_name | length > 0
       - >-
         [openbao_tls_dir, openbao_tls_cert_file, openbao_tls_key_file, openbao_tls_ca_file, openbao_plugin_directory]
-        | reject('match', '^/[^ ]*$') | list | length == 0
+        | reject('match', '^/\S*\Z') | list | length == 0
       - openbao_addr is string and openbao_addr is match('^https://[A-Za-z0-9.:\[\]-]+:[0-9]+\Z')
       - openbao_token_script is boolean
       - openbao_cluster_listen_address is match('^[A-Za-z0-9.\[\]:-]*:[0-9]+\Z')
@@ -52,9 +52,9 @@
       - openbao_service_start_limit_interval_sec is integer and openbao_service_start_limit_interval_sec >= 0
       - openbao_service_start_limit_burst is integer and openbao_service_start_limit_burst > 0
       - openbao_service_after is sequence and openbao_service_after is not string
-      - openbao_service_after | select('match', '^[A-Za-z0-9:_.@-]+[.][a-z]+$') | list | length == openbao_service_after | length
+      - openbao_service_after | select('match', '^[A-Za-z0-9:_.@-]+[.][a-z]+\Z') | list | length == openbao_service_after | length
       - openbao_service_before is sequence and openbao_service_before is not string
-      - openbao_service_before | select('match', '^[A-Za-z0-9:_.@-]+[.][a-z]+$') | list | length == openbao_service_before | length
+      - openbao_service_before | select('match', '^[A-Za-z0-9:_.@-]+[.][a-z]+\Z') | list | length == openbao_service_before | length
     fail_msg: >-
       openbao_api_addr is required (https://host:port), openbao_listener_address host:port, openbao_storage one
       backend, openbao_seal at most one seal, openbao_seal_previous at most one seal and not openbao_seal itself, SANs IP:... or DNS:..., openbao_tls_valid_days a positive integer,
@@ -111,11 +111,11 @@
   ansible.builtin.assert:
     that:
       - openbao_audit_devices | map(attribute='path') | unique | list | length == openbao_audit_devices | length
-      - openbao_file_audit_paths | reject('match', '^' ~ (openbao_audit_log_dir | regex_escape) ~ '/[^/]+\Z') | list | length == 0
+      - openbao_file_audit_paths | reject('match', '^' ~ (openbao_audit_log_dir | regex_escape) ~ '/[^/\n\r]+\Z') | list | length == 0
       - openbao_audit_logrotate is boolean
       - openbao_audit_logrotate_keep is integer and openbao_audit_logrotate_keep > 0
       - openbao_backup_enabled is boolean
-      - openbao_backup_dir is match('^/[^ ]*\Z')
+      - openbao_backup_dir is match('^/\S*\Z')
       - openbao_backup_schedule is string and openbao_backup_schedule | length > 0
       - openbao_backup_keep is integer and openbao_backup_keep > 0
       - openbao_backup_token_period is integer and openbao_backup_token_period >= 3600
@@ -163,7 +163,7 @@
   ansible.builtin.assert:
     that:
       - openbao_environment is mapping
-      - openbao_environment.keys() | reject('match', '^[A-Z_][A-Z0-9_]*$') | list | length == 0
+      - openbao_environment.keys() | reject('match', '^[A-Z_][A-Z0-9_]*\Z') | list | length == 0
       - openbao_environment.values() | reject('string') | list | length == 0
       - openbao_environment.values() | select('search', '[\n\r]') | list | length == 0
       - openbao_environment_required is sequence and openbao_environment_required is not string

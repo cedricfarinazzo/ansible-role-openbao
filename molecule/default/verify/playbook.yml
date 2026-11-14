@@ -484,6 +484,39 @@
               - ansible_failed_task.name is match('Assert nothing create-only differs')
               - "'policy' in ansible_failed_result.results | selectattr('failed', 'defined') | selectattr('failed') | map(attribute='msg') | join"
 
+    - name: Read the create-only policy after the refused rewrite
+      ansible.builtin.uri:
+        url: https://127.0.0.1:8200/v1/sys/policies/acl/once
+        ca_path: /opt/openbao/tls/tls.crt
+        headers: {X-Vault-Token: "{{ molecule_root }}"}
+      register: molecule_once
+      no_log: true
+
+    - name: The object is as it was created
+      ansible.builtin.assert:
+        that:
+          - "'kv/data/once' in molecule_once.json.data.policy"
+          - "'kv/data/twice' not in molecule_once.json.data.policy"
+
+    - name: A create_only that is not a boolean is refused
+      block:
+        - name: Give a string
+          ansible.builtin.include_role:
+            name: ../../../../ansible-role-openbao
+            tasks_from: configure
+          vars:
+            openbao_root_token: "{{ molecule_root }}"
+            openbao_backup_enabled: false
+            openbao_api_resources:
+              - {path: sys/policies/acl/once, create_only: "yes", data: {policy: "path \"kv/data/once\" { capabilities = [\"read\"] }"}}
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: configure took a create_only that is not a boolean
+      rescue:
+        - name: It stopped on the input check
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Assert the post-init inputs'
+
     - name: A read_path with a trailing newline is refused
       block:
         - name: Give one

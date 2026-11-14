@@ -45,6 +45,175 @@
         molecule_plugin_arch: amd64_v1
         openbao_tls_common_name: openbao.example.org
 
+# A value ending in a newline is refused: a regex `$` also matches before one, `\Z` does not
+- name: Inputs ending in a newline are refused
+  hosts: all
+  gather_facts: false
+  vars:
+    molecule_el: false
+    molecule_plugin_arch: amd64_v1
+    openbao_tls_common_name: openbao.example.org
+  tasks:
+    - name: "A newline ends openbao_version"
+      block:
+        - name: Run the input checks
+          ansible.builtin.include_role:
+            name: ../../../../ansible-role-openbao
+            tasks_from: validate.yml
+          vars:
+            openbao_version: "2.7.1\n"
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: The input checks took openbao_version ending in a newline
+      rescue:
+        - name: It stopped on the input check
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Assert the install inputs'
+
+    - name: "A newline ends openbao_gpg_key_fingerprint"
+      block:
+        - name: Run the input checks
+          ansible.builtin.include_role:
+            name: ../../../../ansible-role-openbao
+            tasks_from: validate.yml
+          vars:
+            openbao_gpg_key_fingerprint: "0123456789ABCDEF0123456789ABCDEF01234567\n"
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: The input checks took openbao_gpg_key_fingerprint ending in a newline
+      rescue:
+        - name: It stopped on the input check
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Assert the install inputs'
+
+    - name: "A newline ends openbao_api_addr"
+      block:
+        - name: Run the input checks
+          ansible.builtin.include_role:
+            name: ../../../../ansible-role-openbao
+            tasks_from: validate.yml
+          vars:
+            openbao_api_addr: "https://openbao.example.org:8200\n"
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: The input checks took openbao_api_addr ending in a newline
+      rescue:
+        - name: It stopped on the input check
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Assert the server inputs'
+
+    - name: "A newline ends openbao_listener_address"
+      block:
+        - name: Run the input checks
+          ansible.builtin.include_role:
+            name: ../../../../ansible-role-openbao
+            tasks_from: validate.yml
+          vars:
+            openbao_listener_address: "0.0.0.0:8200\n"
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: The input checks took openbao_listener_address ending in a newline
+      rescue:
+        - name: It stopped on the input check
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Assert the server inputs'
+
+    - name: "A newline ends openbao_tls_cert_file"
+      block:
+        - name: Run the input checks
+          ansible.builtin.include_role:
+            name: ../../../../ansible-role-openbao
+            tasks_from: validate.yml
+          vars:
+            openbao_tls_cert_file: "/opt/openbao/tls/tls.crt\n"
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: The input checks took openbao_tls_cert_file ending in a newline
+      rescue:
+        - name: It stopped on the input check
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Assert the server inputs'
+
+    - name: "A newline ends openbao_tls_subject_alt_names"
+      block:
+        - name: Run the input checks
+          ansible.builtin.include_role:
+            name: ../../../../ansible-role-openbao
+            tasks_from: validate.yml
+          vars:
+            openbao_tls_subject_alt_names: ["DNS:openbao.example.org\n"]
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: The input checks took openbao_tls_subject_alt_names ending in a newline
+      rescue:
+        - name: It stopped on the input check
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Assert the server inputs'
+
+    - name: "A newline ends openbao_service_after"
+      block:
+        - name: Run the input checks
+          ansible.builtin.include_role:
+            name: ../../../../ansible-role-openbao
+            tasks_from: validate.yml
+          vars:
+            openbao_service_after: ["network.target\n"]
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: The input checks took openbao_service_after ending in a newline
+      rescue:
+        - name: It stopped on the input check
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Assert the server inputs'
+
+    - name: "A newline ends openbao_environment"
+      block:
+        - name: Run the input checks
+          ansible.builtin.include_role:
+            name: ../../../../ansible-role-openbao
+            tasks_from: validate.yml
+          vars:
+            openbao_environment: {"BAO_NAME\n": x}
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: The input checks took openbao_environment ending in a newline
+      rescue:
+        - name: It stopped on the input check
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Assert the environment (values are never printed)'
+
+    - name: "A newline ends openbao_backup_dir"
+      block:
+        - name: Run the input checks
+          ansible.builtin.include_role:
+            name: ../../../../ansible-role-openbao
+            tasks_from: validate.yml
+          vars:
+            openbao_backup_dir: "/var/backups/openbao\n"
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: The input checks took openbao_backup_dir ending in a newline
+      rescue:
+        - name: It stopped on the input check
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Assert the audit paths and the snapshots'
+
+    - name: "A newline ends openbao_audit_devices"
+      block:
+        - name: Run the input checks
+          ansible.builtin.include_role:
+            name: ../../../../ansible-role-openbao
+            tasks_from: validate.yml
+          vars:
+            openbao_audit_devices: [{type: file, path: file, options: {file_path: "/var/log/openbao/audit.log\n"}}]
+        - name: Not reached
+          ansible.builtin.fail:
+            msg: The input checks took openbao_audit_devices ending in a newline
+      rescue:
+        - name: It stopped on the input check
+          ansible.builtin.assert:
+            that: ansible_failed_task.name == 'Assert the audit paths and the snapshots'
+
 # AC: a bad input stops the role before anything is installed
 - name: Failure paths, before any install
   hosts: all

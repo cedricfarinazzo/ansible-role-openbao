@@ -38,7 +38,7 @@ openbao_audit_stanzas: >-
 
 # Host of openbao_api_addr, without brackets for IPv6
 openbao_api_host: "{{ (openbao_api_addr | urlsplit('hostname')) if openbao_api_addr | length > 0 else '' }}"
-openbao_api_host_is_ip: "{{ openbao_api_host is match('^[0-9.]+$') or ':' in openbao_api_host }}"
+openbao_api_host_is_ip: "{{ openbao_api_host is match('^[0-9.]+\\Z') or ':' in openbao_api_host }}"
 openbao_cluster_addr_default: >-
   {{ 'https://127.0.0.1:8201' if openbao_cluster_group == ''
      else 'https://' ~ ('[' ~ openbao_api_host ~ ']' if ':' in openbao_api_host else openbao_api_host) ~ ':8201' }}
