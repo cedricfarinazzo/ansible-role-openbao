@@ -255,7 +255,7 @@ openbao_token_roles: []
 openbao_api_resources: []
 ```
 
-An API resource takes two optional keys. `create_only: true` writes it once, when the read finds nothing: never again, and a key the API reads back that differs stops the run (delete it first, `state: absent`). `read_path` reads from another path than the one written (a query allowed, `pki/issuers?list=true`): a generate endpoint, which reads nothing back, is read where its result shows.
+An API resource takes two optional keys. `create_only: true` writes it once, when the read finds nothing: never again, and a key the API reads back that differs stops the run (delete it first, `state: absent`). `read_path` reads from another path than the one written (a query allowed, `pki/issuers?list=true`): a generate endpoint, which reads nothing back, is read where its result shows. `state: absent` deletes `path`, never `read_path`: remove a generated object through its own endpoint (an item for `pki/root` with `state: absent`).
 
 Each item is read first and written only when a key it gives differs from what the API reads back. A key the API never reads back (a password) is written when the object is created only. `absent` disables a mount (its data is destroyed), deletes a key (after allowing it), a policy, a role or an object. A path already enabled with another type stops the run. In a cluster the writes run once, on the first member in the play. Every task that carries the root token has `no_log`.
 

@@ -302,7 +302,7 @@
         tasks_from: configure
         apply:
           check_mode: true
-      vars: &molecule_scratch_check
+      vars:
         openbao_root_token: "{{ molecule_root }}"
         openbao_backup_enabled: false
         openbao_secrets_engines: [{path: scratch, type: kv, config: {max_lease_ttl: 3600}}]
