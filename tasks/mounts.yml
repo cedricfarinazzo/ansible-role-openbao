@@ -7,6 +7,7 @@
     ca_path: "{{ openbao_tls_ca_file }}"
     headers: {X-Vault-Token: "{{ openbao_root_token }}"}
   register: openbao_mounts_read
+  check_mode: false  # a read: check mode needs the list
   no_log: true
 
 - name: Existing paths without a trailing slash, {{ openbao_mount_kind }}
@@ -36,6 +37,7 @@
   loop: "{{ openbao_mount_items | rejectattr('state', 'equalto', 'absent') | rejectattr('path', 'in', openbao_mounts_existing.keys() | list) | list }}"
   loop_control:
     label: "{{ item.path }} ({{ item.type }})"
+  register: openbao_mounts_enabled
   changed_when: true
   no_log: true
 
@@ -46,7 +48,9 @@
     openbao_objects_kind: "{{ openbao_mount_kind }} tuning"
     openbao_objects: >-
       {%- set out = [] -%}
-      {%- for m in openbao_mount_items if m.state != 'absent' -%}
+      {#- A mount check mode did not enable has no tune to read (ansible_check_mode misses an apply'd check_mode) -#}
+      {%- set enabled = openbao_mounts_enabled.results | default([]) | rejectattr('skipped', 'defined') | map(attribute='item.path') | list -%}
+      {%- for m in openbao_mount_items if m.state != 'absent' and (m.path in openbao_mounts_existing or m.path in enabled) -%}
       {%- set data = m.config | default({}) -%}
       {%- if m.options is defined -%}{%- set data = data | combine({'options': m.options}) -%}{%- endif -%}
       {%- if m.description is defined -%}{%- set data = data | combine({'description': m.description}) -%}{%- endif -%}

@@ -13,6 +13,7 @@
   loop_control:
     label: "{{ item.label }}"
   register: openbao_objects_read
+  check_mode: false  # a read: check mode compares too
   no_log: true
 
 - name: Assert nothing create-only differs, {{ openbao_objects_kind }}

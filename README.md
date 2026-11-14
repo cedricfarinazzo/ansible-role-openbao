@@ -251,9 +251,11 @@ openbao_policies: []               # {name, rules} (HCL)
 # {name, allowed_policies, ...any token role parameter: orphan, renewable, token_period, token_explicit_max_ttl,
 #  token_bound_cidrs, token_type, token_no_default_policy, token_num_uses, path_suffix}
 openbao_token_roles: []
-# {path, data}: any other object written with a POST and read back with a GET
+# {path, data, state?, create_only?, read_path?}: any other object written with a POST and read back with a GET
 openbao_api_resources: []
 ```
+
+An API resource takes two optional keys. `create_only: true` writes it once, when the read finds nothing: never again, and a key the API reads back that differs stops the run (delete it first, `state: absent`). `read_path` reads from another path than the one written (a query allowed, `pki/issuers?list=true`): a generate endpoint, which reads nothing back, is read where its result shows. `state: absent` deletes `path`, never `read_path`: remove a generated object through its own endpoint (an item for `pki/root` with `state: absent`).
 
 Each item is read first and written only when a key it gives differs from what the API reads back. A key the API never reads back (a password) is written when the object is created only. `absent` disables a mount (its data is destroyed), deletes a key (after allowing it), a policy, a role or an object. A path already enabled with another type stops the run. In a cluster the writes run once, on the first member in the play. Every task that carries the root token has `no_log`.
 
@@ -378,6 +380,20 @@ openbao_api_resources:
     data: {token_policies: [app], token_ttl: 1800, secret_id_ttl: 0}
 ```
 
+### A PKI root CA, generated once
+
+The key stays inside OpenBao. Without `create_only` and `read_path`, every run would generate a new CA.
+
+```yaml
+openbao_secrets_engines:
+  - {path: pki, type: pki, config: {max_lease_ttl: 87600h}}
+openbao_api_resources:
+  - path: pki/root/generate/internal
+    read_path: pki/issuers?list=true
+    create_only: true
+    data: {common_name: Example Root CA, key_type: ec, key_bits: 256, ttl: 87600h}
+```
+
 ### Remove what is no longer wanted
 
 ```yaml
@@ -400,10 +416,10 @@ openbao_policies:
 Two Molecule scenarios, in Docker. The tooling is pinned in `requirements-dev.txt`; `run-tests.sh` installs it into `.venv`.
 
 - **default**, on every supported distribution. SoftHSM stands in for the HSM, with the real `kms-pkcs11` plugin.
-  - **prepare:** the role stops with nothing installed on an unset required variable or a wrong plugin checksum; `openbao_service_start: false` installs an older release without starting it; a wrong PIN is stopped by the OAEP check before any start.
-  - **check:** check mode.
-  - **converge:** upgrades the held package with one start, inits (3 recovery shares, threshold 2), runs post-init.
-  - **verify:** TLS 1.3 only, metrics without a token, JSON logs, the file audit log and its rotation, tuning and roles read back, every kind of object created, changed and removed, a create-only field refused, two snapshots kept of three, a periodic token doing transit and nothing else, a restart unsealing through the seal.
+  - **prepare:** the role stops with nothing installed on an unset required variable or a wrong plugin checksum, and on an input ending in a newline; `openbao_service_start: false` installs an older release without starting it; a wrong PIN is stopped by the OAEP check before any start.
+  - **check:** check mode, before converge and again after it (post-init included, on the configured server).
+  - **converge:** upgrades the held package with one start, inits (3 recovery shares, threshold 2), runs post-init with a PKI root CA.
+  - **verify:** TLS 1.3 only, metrics without a token, JSON logs, the file audit log and its rotation, tuning and roles read back, post-init in check mode on objects that do not exist yet and on objects that differ (no error, nothing written), every kind of object created, changed and removed, a create-only field refused, a create-only API resource never rewritten (refused, and read back unchanged), a `create_only` that is not a boolean refused, the root CA made once (rerun with other data: same single issuer), a `read_path` ending in a newline refused, two snapshots kept of three, a periodic token doing transit and nothing else, a restart unsealing through the seal.
   - **idempotence:** install, init and post-init rerun: nothing changes.
 - **cluster**, on Debian 13: three nodes with a static seal join by `retry_join` through the certificate bundle; three voters, a write on one node read on another, post-init written once, snapshots from a standby with its own token, then idempotence.
 

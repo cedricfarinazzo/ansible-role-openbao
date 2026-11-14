@@ -62,7 +62,7 @@
   vars:
     openbao_rpm_sha256: >-
       {{ (openbao_release_checksums.content | b64decode).splitlines()
-         | select('match', '^[0-9a-f]{64}  ' ~ (openbao_rpm_file | regex_escape) ~ '$')
+         | select('match', '^[0-9a-f]{64}  ' ~ (openbao_rpm_file | regex_escape) ~ '\Z')
          | map('split') | map('first') | first | default('missing') }}
   when:
     - openbao_installed_version != openbao_version

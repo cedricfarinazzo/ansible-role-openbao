@@ -88,6 +88,7 @@ provisioner:
           - {path: transit, type: transit, description: Auto-unseal of other OpenBao servers}
           # A trailing slash names the same mount: the second post-init run must not create it again
           - {path: kv/, type: kv, options: {version: "2"}, config: {max_lease_ttl: 7200}}
+          - {path: pki, type: pki, config: {max_lease_ttl: 315360000}}
         openbao_auth_methods:
           - {path: approle, type: approle, config: {default_lease_ttl: 3600}}
         openbao_transit_keys:
@@ -104,6 +105,11 @@ provisioner:
         openbao_api_resources:
           - path: auth/approle/role/app
             data: {token_policies: [autounseal], token_ttl: 1800, secret_id_ttl: 0}
+          # Generated once: read where the issuers are listed, never written again (verify changes its data)
+          - path: pki/root/generate/internal
+            read_path: pki/issuers?list=true
+            create_only: true
+            data: {common_name: Example Root CA, key_type: ec, key_bits: 256, ttl: 87600h}
 verifier:
   name: ansible
 scenario:
@@ -115,6 +121,8 @@ scenario:
     - prepare
     - check
     - converge
+    # Again on the configured server: post-init in check mode too
+    - check
     - verify
     - idempotence
     - destroy
