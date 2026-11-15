@@ -13,6 +13,19 @@ Two parts, with the init in between, done by hand so its output (recovery or uns
 
 ## 🚀 Quick Start
 
+Install from Ansible Galaxy ([cedricfarinazzo.openbao](https://galaxy.ansible.com/cedricfarinazzo/openbao)), pinned to a release:
+
+```yaml
+# requirements.yml
+roles:
+  - name: cedricfarinazzo.openbao
+    version: 1.3.0
+```
+
+```bash
+ansible-galaxy role install -r requirements.yml
+```
+
 ```yaml
 # Install, seal, start
 - hosts: bao
@@ -453,4 +466,4 @@ Once CI passes on `main`, [semantic-release](https://github.com/semantic-release
 
 ## 📄 License
 
-MIT
+MIT, see [LICENSE](LICENSE).
