@@ -1,0 +1,25 @@
+---
+# One bad input, set as task vars of the include: refused by molecule_refused_by,
+# its failed assertion naming molecule_refused_input
+- name: "A bad input is refused: {{ molecule_refused_input }}"
+  block:
+    # The scenario's own path to the role, as in playbook.yml
+    - name: Run the input checks  # noqa: role-name[path]
+      ansible.builtin.include_role:
+        name: ../../../../ansible-role-openbao
+        tasks_from: validate.yml
+    - name: Not reached
+      ansible.builtin.fail:
+        msg: The input checks took a bad {{ molecule_refused_input }}
+  rescue:
+    - name: It stopped on the input check, on that input
+      ansible.builtin.assert:
+        that:
+          - ansible_failed_task.name == molecule_refused_by
+          - molecule_assertions | select('search', molecule_refused_input) | list | length > 0
+        fail_msg: "stopped by {{ ansible_failed_task.name }}: {{ molecule_assertions }}"
+      vars:
+        # A looped assert fails per item, in results
+        molecule_assertions: >-
+          {{ ansible_failed_result.results | default([ansible_failed_result])
+             | selectattr('assertion', 'defined') | map(attribute='assertion') | list }}
