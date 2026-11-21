@@ -27,6 +27,7 @@ platforms:
 provisioner:
   name: ansible
   playbooks:
+    prepare: prepare/playbook.yml
     converge: converge/playbook.yml
     verify: verify/playbook.yml
   inventory:
@@ -61,6 +62,7 @@ scenario:
     - dependency
     - destroy
     - create
+    - prepare
     - converge
     - verify
     - idempotence

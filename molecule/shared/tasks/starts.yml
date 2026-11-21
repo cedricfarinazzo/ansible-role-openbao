@@ -1,0 +1,13 @@
+---
+# Imported by every verify: prepare removed policy-rc.d, and every recorded OpenBao start had the role's configuration
+- name: Packages could start their services; OpenBao always started on the role's configuration
+  ansible.builtin.shell: |
+    set -o pipefail
+    fail() { echo "FAIL: $*"; exit 1; }
+    [ ! -e /usr/sbin/policy-rc.d ] || fail "/usr/sbin/policy-rc.d present: package starts were blocked"
+    f=/run/molecule-openbao-starts
+    [ -s $f ] || fail "OpenBao never started"
+    if grep -vx role $f; then fail "OpenBao started without the role's configuration: $(tr '\n' ' ' < $f)"; fi
+  args:
+    executable: /bin/bash
+  changed_when: false

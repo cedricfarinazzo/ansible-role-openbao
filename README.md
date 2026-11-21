@@ -426,7 +426,7 @@ openbao_policies:
 
 ## 🧪 Testing
 
-Two Molecule scenarios, in Docker. The tooling is pinned in `requirements-dev.txt`; `run-tests.sh` installs it into `.venv`.
+Molecule scenarios, in Docker. Every prepare first removes the image's `policy-rc.d`, so packages start their services at install as on a host; every verify checks that each OpenBao start found the role's configuration. The tooling is pinned in `requirements-dev.txt`; `run-tests.sh` installs it into `.venv`.
 
 - **default**, on every supported distribution. SoftHSM stands in for the HSM, with the real `kms-pkcs11` plugin.
   - **prepare:** the role stops with nothing installed on an unset required variable or a wrong plugin checksum, on an input ending in a newline, a plugin version holding a path or a newline, and a URL input with a space, a newline or an http scheme; `openbao_service_start: false` installs an older release without starting it; a wrong PIN is stopped by the OAEP check before any start.

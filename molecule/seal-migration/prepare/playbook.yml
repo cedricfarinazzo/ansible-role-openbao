@@ -2,6 +2,9 @@
 - name: Two stand-in HSM tokens, the same key id and label on each (as two PIV tokens)
   hosts: all
   tasks:
+    - name: Packages start their services, each OpenBao start recorded
+      ansible.builtin.import_tasks: ../../shared/tasks/install-as-host.yml
+
     - name: Package lists
       ansible.builtin.apt:
         update_cache: true

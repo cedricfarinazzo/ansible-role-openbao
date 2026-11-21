@@ -1,4 +1,11 @@
 ---
+- name: Install-time starts
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: No policy-rc.d, every OpenBao start on the role's configuration
+      ansible.builtin.import_tasks: ../../shared/tasks/starts.yml
+
 - name: Verify
   hosts: all
   gather_facts: true
