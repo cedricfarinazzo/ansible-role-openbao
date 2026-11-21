@@ -446,8 +446,11 @@ make molecule-test-all
 # The three-node cluster
 ./run-tests.sh -s cluster debian13
 
+# The input checks: every rule of tasks/validate.yml, with trailing and embedded newlines (no container)
+tests/validate.test.sh
+
 # Lint
-source .venv/bin/activate && yamllint . && ansible-lint && shellcheck files/* run-tests.sh
+source .venv/bin/activate && yamllint . && ansible-lint && shellcheck files/* run-tests.sh tests/*.sh
 ```
 
 ## 🚢 Releases

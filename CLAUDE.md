@@ -19,6 +19,7 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 - `molecule/cluster/` — three raft nodes on one docker network, static seal (the same test key everywhere): certificate bundle, `retry_join`, three voters, replication, post-init once, snapshots from a standby. Debian 13 only, one distribution at a time (container names carry no distribution).
 - `molecule/seal-migration/` — one node, Debian 13, two SoftHSM keys: init on key A, `openbao_seal_previous` A + `openbao_seal` B, `bao operator unseal -migrate` with two recovery keys, then B alone; verify: unsealed by B with A deleted, the same recovery keys still authorise a root token, A alone stays sealed.
 - `molecule/default/` — one node (docker driver, `geerlingguy/docker-<distro>-ansible`), Debian and EL families. `prepare/`: SoftHSM token with an RSA key (CKA_ID 03, label `seal`); failure paths with nothing installed (required env unset, wrong plugin checksum, an input ending in a newline); 2.7.1 installed with `openbao_service_start: false`; a wrong PIN stopped by the OAEP check (`CKR_PIN_INCORRECT`), OpenBao never started. `check` (before converge, and after it with post-init). `converge/`: the role (upgrade to the default version, one start), init once (test only: output kept root-only in `/root/molecule-init.json`), post-init; `idempotence` reruns all three and must change nothing. `verify/`: one start, files, restart policy, non-root client, environment, init 3/2, cluster port on loopback, post-init refuses without a token and a mount of another type, TLS 1.3 only, metrics without a token, JSON logs, file audit and logrotate, tuning and roles read back, create/change/absent of every object kind, a create-only field refused, check mode on missing and differing objects, a root CA by `create_only` + `read_path` made once, snapshots, the periodic token, a restart unsealing through the seal.
+- `tests/validate.test.sh` — good and bad inputs against `tasks/validate.yml` on two local inventory hosts (groups `bao`, `pair`, `other` for the cluster checks); a bad input must fail on an assertion, never on a crash.
 - `run-tests.sh` / `Makefile` — local Molecule entry points (`-s cluster` for the cluster scenario); several distros run in parallel, one log each in `.molecule-logs/<scenario>-<distro>.log`.
 - `requirements.yml` — collections the role needs at runtime (consumer ranges); `requirements-dev.txt` — controller tooling, exact pins; `molecule/default/collections.yml` — test pins.
 - `package.json`, `bun.lock`, `.releaserc.json` — semantic-release tooling only.
@@ -30,7 +31,7 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 - **Breaking = a consumer must act:** dropping a platform, renaming or removing a variable, changing a default that changes the seal, the listener, the storage path or the certificate.
 - **Tags are bare semver** (`1.2.3`). Release notes in GitHub Releases; no `CHANGELOG.md`.
 - **No ruleset or branch protection on `main`:** it blocks semantic-release. Changes go through a PR with green CI, by discipline.
-- **Variables:** every user-facing variable starts with `openbao_`, is defined in `defaults/main.yml`, asserted in `tasks/validate.yml` (or `configure.yml` for post-init) and documented in `README.md` in the same PR.
+- **Variables:** every user-facing variable starts with `openbao_`, is defined in `defaults/main.yml`, asserted in `tasks/validate.yml` (with a case in `tests/validate.test.sh`; or `configure.yml` for post-init) and documented in `README.md` in the same PR.
 - **Post-init items take `state: present|absent`; an item left out is left alone.** Compare only the keys given against what the API reads back; never write an object that reads back the same.
 - **Nothing installed before every check passed:** inputs, then plugin checksums, then the repository key fingerprint. Molecule's `prepare` proves the first two.
 - **Secrets never logged or stored:** the env file task and every task carrying the root token have `no_log`; the role never runs `bao operator init` (its output stays with the operator).
@@ -45,7 +46,8 @@ Public Ansible role `cedricfarinazzo.openbao` (Ansible Galaxy): an OpenBao serve
 
 ## Commands
 
-- Lint: `source .venv/bin/activate && yamllint . && ansible-lint && shellcheck files/* run-tests.sh`
+- Lint: `source .venv/bin/activate && yamllint . && ansible-lint && shellcheck files/* run-tests.sh tests/*.sh`
+- Input tests: `tests/validate.test.sh`
 - Molecule on one distro: `./run-tests.sh debian13`; all, in parallel: `./run-tests.sh all`
 - Iterate: `MOLECULE_DISTRO=debian13 molecule converge` then `molecule verify` (venv active, `MOLECULE_ROLE_NAME_CHECK=0`)
 

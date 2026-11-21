@@ -30,7 +30,9 @@ jobs:
           sys.exit(f'meta/main.yml description: {len(d)} characters, Galaxy accepts 255') if len(d) > 255 else print(len(d), 'characters')
           "
       - run: ansible-lint
-      - run: shellcheck files/* run-tests.sh
+      - run: shellcheck files/* run-tests.sh tests/*.sh
+      # The input checks: every bad input fails before any change
+      - run: tests/validate.test.sh
 
   molecule:
     runs-on: ubuntu-26.04
