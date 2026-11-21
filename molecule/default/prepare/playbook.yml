@@ -2,6 +2,9 @@
 - name: Prepare the stand-in HSM
   hosts: all
   tasks:
+    - name: Packages start their services, each OpenBao start recorded
+      ansible.builtin.import_tasks: ../../shared/tasks/install-as-host.yml
+
     - name: Package lists (Debian family)
       ansible.builtin.apt:
         update_cache: true

@@ -1,0 +1,7 @@
+---
+- name: Prepare
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Packages start their services, each OpenBao start recorded
+      ansible.builtin.import_tasks: ../../shared/tasks/install-as-host.yml

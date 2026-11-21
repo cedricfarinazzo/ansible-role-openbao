@@ -1,0 +1,28 @@
+---
+# Imported first by every prepare. The image's policy-rc.d (exit 101) stops every postinst from starting its
+# service; a real host starts it at once: removed, so the scenarios install as a host does
+- name: Packages start their services on install, as on a host
+  ansible.builtin.file:
+    path: /usr/sbin/policy-rc.d
+    state: absent
+
+# Each OpenBao start records whether the role's configuration (JSON) was in place ("role") or the package's HCL
+# or none ("package"); in /run, out of the role's way
+- name: Drop-in directory of the OpenBao service
+  ansible.builtin.file:
+    path: /run/systemd/system/openbao.service.d
+    state: directory
+    mode: "0755"
+
+- name: Record the configuration each OpenBao start finds
+  ansible.builtin.copy:
+    dest: /run/systemd/system/openbao.service.d/molecule-start.conf
+    content: |
+      [Service]
+      ExecStartPre=+/bin/sh -c 'if head -c1 /etc/openbao/openbao.hcl 2> /dev/null | grep -q "{"; then echo role; \
+        else echo package; fi >> /run/molecule-openbao-starts'
+    mode: "0644"
+
+- name: Systemd reads the drop-in
+  ansible.builtin.systemd_service:
+    daemon_reload: true
