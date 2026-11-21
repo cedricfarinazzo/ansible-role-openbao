@@ -1,8 +1,11 @@
 ---
+# Check mode reports a stale cache as changed without refreshing it: only a real refresh counts.
 - name: Package lists (Debian family)
   ansible.builtin.apt:
     update_cache: true
     cache_valid_time: 3600
+  register: openbao_cache_refresh
+  changed_when: openbao_cache_refresh.cache_updated and not ansible_check_mode
   when: ansible_facts['os_family'] == 'Debian'
 
 - name: Tools for the key check, the package and the certificate

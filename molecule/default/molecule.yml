@@ -20,6 +20,7 @@ provisioner:
     prepare: prepare/playbook.yml
     converge: converge/playbook.yml
     verify: verify/playbook.yml
+    side_effect: side_effect/playbook.yml
   inventory:
     group_vars:
       all:
@@ -125,4 +126,5 @@ scenario:
     - check
     - verify
     - idempotence
+    - side_effect
     - destroy
