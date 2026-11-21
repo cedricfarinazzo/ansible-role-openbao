@@ -1,5 +1,7 @@
 ---
 openbao_plugin_types: [auth, database, kms, secret]
+# The URL inputs: https, URI characters only (no space, quote or control character), anchored
+openbao_url_re: '^https://[A-Za-z0-9._~:/?#@!$&()*+,;=%\[\]-]+\Z'
 openbao_env_file: /etc/openbao/openbao.env
 openbao_config_file: /etc/openbao/openbao.hcl
 openbao_client_env_file: /etc/openbao/client.env

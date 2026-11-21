@@ -214,6 +214,117 @@
           ansible.builtin.assert:
             that: ansible_failed_task.name == 'Assert the audit paths and the snapshots'
 
+    # A plugin version is a path part of the plugin cache: anchored, no slash or newline
+    - name: A plugin version with a path
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        molecule_plugin_version: "v0.3.0/../x"
+        molecule_refused_input: item.version
+        molecule_refused_by: Assert the plugins
+    - name: A plugin version with a trailing newline
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        molecule_plugin_version: "v0.3.0\n"
+        molecule_refused_input: item.version
+        molecule_refused_by: Assert the plugins
+    # Every URL input: https, one token, no space or control character
+    - name: URL openbao_apt_repo_url with a space
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        openbao_apt_repo_url: "https://example.org/a b"
+        molecule_refused_input: openbao_apt_repo_url
+        molecule_refused_by: Assert the install inputs
+    - name: URL openbao_apt_repo_url with a newline
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        openbao_apt_repo_url: "https://example.org/a\nb"
+        molecule_refused_input: openbao_apt_repo_url
+        molecule_refused_by: Assert the install inputs
+    - name: URL openbao_apt_repo_url with a trailing newline
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        openbao_apt_repo_url: "https://example.org/a\n"
+        molecule_refused_input: openbao_apt_repo_url
+        molecule_refused_by: Assert the install inputs
+    - name: URL openbao_apt_repo_url with an http scheme
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        openbao_apt_repo_url: "http://example.org/a"
+        molecule_refused_input: openbao_apt_repo_url
+        molecule_refused_by: Assert the install inputs
+    - name: URL openbao_release_url with a space
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        openbao_release_url: "https://example.org/a b"
+        molecule_refused_input: openbao_release_url
+        molecule_refused_by: Assert the install inputs
+    - name: URL openbao_release_url with a newline
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        openbao_release_url: "https://example.org/a\nb"
+        molecule_refused_input: openbao_release_url
+        molecule_refused_by: Assert the install inputs
+    - name: URL openbao_release_url with a trailing newline
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        openbao_release_url: "https://example.org/a\n"
+        molecule_refused_input: openbao_release_url
+        molecule_refused_by: Assert the install inputs
+    - name: URL openbao_release_url with an http scheme
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        openbao_release_url: "http://example.org/a"
+        molecule_refused_input: openbao_release_url
+        molecule_refused_by: Assert the install inputs
+    - name: URL openbao_gpg_key_url with a space
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        openbao_gpg_key_url: "https://example.org/a b"
+        molecule_refused_input: openbao_gpg_key_url
+        molecule_refused_by: Assert the install inputs
+    - name: URL openbao_gpg_key_url with a newline
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        openbao_gpg_key_url: "https://example.org/a\nb"
+        molecule_refused_input: openbao_gpg_key_url
+        molecule_refused_by: Assert the install inputs
+    - name: URL openbao_gpg_key_url with a trailing newline
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        openbao_gpg_key_url: "https://example.org/a\n"
+        molecule_refused_input: openbao_gpg_key_url
+        molecule_refused_by: Assert the install inputs
+    - name: URL openbao_gpg_key_url with an http scheme
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        openbao_gpg_key_url: "http://example.org/a"
+        molecule_refused_input: openbao_gpg_key_url
+        molecule_refused_by: Assert the install inputs
+    - name: URL openbao_cluster_addr with a space
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        openbao_cluster_addr: "https://example.org/a b"
+        molecule_refused_input: openbao_cluster_addr
+        molecule_refused_by: Assert the server inputs
+    - name: URL openbao_cluster_addr with a newline
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        openbao_cluster_addr: "https://example.org/a\nb"
+        molecule_refused_input: openbao_cluster_addr
+        molecule_refused_by: Assert the server inputs
+    - name: URL openbao_cluster_addr with a trailing newline
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        openbao_cluster_addr: "https://example.org/a\n"
+        molecule_refused_input: openbao_cluster_addr
+        molecule_refused_by: Assert the server inputs
+    - name: URL openbao_cluster_addr with an http scheme
+      ansible.builtin.include_tasks: refused.yml
+      vars:
+        openbao_cluster_addr: "http://example.org/a"
+        molecule_refused_input: openbao_cluster_addr
+        molecule_refused_by: Assert the server inputs
+
 # AC: a bad input stops the role before anything is installed
 - name: Failure paths, before any install
   hosts: all
