@@ -434,6 +434,7 @@ Molecule scenarios, in Docker. Every prepare first removes the image's `policy-r
   - **converge:** upgrades the held package with one start, inits (3 recovery shares, threshold 2), runs post-init with a PKI root CA.
   - **verify:** TLS 1.3 only, metrics without a token, JSON logs, the file audit log and its rotation, tuning and roles read back, post-init in check mode on objects that do not exist yet and on objects that differ (no error, nothing written), every kind of object created, changed and removed, a create-only field refused, a create-only API resource never rewritten (refused, and read back unchanged), a `create_only` that is not a boolean refused, the root CA made once (rerun with other data: same single issuer), a `read_path` ending in a newline refused, two snapshots kept of three, a periodic token doing transit and nothing else, a restart unsealing through the seal.
   - **idempotence:** install, init and post-init rerun: nothing changes.
+  - **side_effect**, Debian family: on an apt cache aged past `cache_valid_time`, check mode changes nothing; a real run then refreshes the cache.
 - **cluster**, on Debian 13: three nodes with a static seal join by `retry_join` through the certificate bundle; three voters, a write on one node read on another, post-init written once, snapshots from a standby with its own token, then idempotence.
 
 ```bash

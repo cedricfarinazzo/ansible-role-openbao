@@ -1,0 +1,55 @@
+---
+# After idempotence, Debian family: a stale apt cache alone is no change in check mode; a real run refreshes it.
+- name: Run the role again from the control node, on a stale apt cache
+  hosts: all
+  gather_facts: true
+  vars:
+    molecule_run: >-
+      ansible-playbook -i "{{ inventory_dir }}" "{{ playbook_dir }}/../converge/playbook.yml"
+  tasks:
+    - name: Only the Debian family refreshes an apt cache
+      ansible.builtin.meta: end_host
+      when: ansible_facts['os_family'] != 'Debian'
+
+    # The apt module reads the stamp when it exists, else the lists directory
+    - name: Age the apt cache past the role's cache_valid_time
+      ansible.builtin.shell: |
+        touch -d '-2 hours' /var/lib/apt/lists
+        if [ -e /var/lib/apt/periodic/update-success-stamp ]; then touch -d '-2 hours' /var/lib/apt/periodic/update-success-stamp; fi
+      changed_when: true
+
+    - name: On a converged node with a stale apt cache, check mode reports no change
+      ansible.builtin.shell: |
+        set -o pipefail
+        out=$({{ molecule_run }} --check 2>&1) || { echo "$out" | tail -25; echo "FAIL: the check run failed"; exit 1; }
+        grep -qE 'changed=0 .*failed=0' <<<"$out" || { echo "$out" | grep -B2 -A2 'changed:'; echo "FAIL: check mode reported a change"; exit 1; }
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      changed_when: false
+
+    # A refresh that only hits leaves the lists' mtime alone: missing release files make it visible
+    - name: Drop the release files of the stale cache
+      ansible.builtin.shell: rm -f /var/lib/apt/lists/*InRelease && touch -d '-2 hours' /var/lib/apt/lists
+      changed_when: true
+
+    - name: A real run on the stale cache refreshes the package lists
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ molecule_run }} > "{{ inventory_dir }}/../refresh.log" 2>&1 ||
+          { tail -25 "{{ inventory_dir }}/../refresh.log"; echo "FAIL: the run failed"; exit 1; }
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      changed_when: true
+
+    - name: The apt cache is fresh after the real run
+      ansible.builtin.shell: |
+        f=/var/lib/apt/lists
+        if [ -e /var/lib/apt/periodic/update-success-stamp ]; then f=/var/lib/apt/periodic/update-success-stamp; fi
+        age=$(( $(date +%s) - $(stat -c %Y "$f") ))
+        [ "$age" -lt 3600 ] || { echo "FAIL: $f is ${age}s old after the run"; exit 1; }
+        ls /var/lib/apt/lists/*InRelease > /dev/null 2>&1 || { echo "FAIL: no release file fetched again"; exit 1; }
+      args:
+        executable: /bin/bash
+      changed_when: false
