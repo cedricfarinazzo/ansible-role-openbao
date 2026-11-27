@@ -111,7 +111,7 @@ Every input is checked before anything changes: a wrong type or value fails the 
 ```yaml
 # Exact version: held (apt) or version-locked (dnf); a new value upgrades, the role never downgrades
 # renovate: datasource=github-releases depName=openbao/openbao
-openbao_version: "2.7.2"
+openbao_version: "2.7.3"
 openbao_apt_repo_url: https://pkgs.openbao.org/deb          # Debian family
 openbao_release_url: https://github.com/openbao/openbao/releases/download   # EL: RPM and signed checksums.txt
 openbao_gpg_key_url: https://openbao.org/assets/openbao-gpg-pub-20240618.asc
